@@ -16,19 +16,19 @@ def init_db():
     cur = conn.cursor()
 
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS fuel_transactions (
-            id SERIAL PRIMARY KEY,
-            vehicle VARCHAR(50) NOT NULL,
-            object_name VARCHAR(100) NOT NULL,
-            liters NUMERIC(10,2) NOT NULL,
-            odometer INTEGER,
-            entered_by VARCHAR(100),
-            status VARCHAR(20) DEFAULT 'new',
-            comment TEXT,
-            checked_by VARCHAR(100),
-            checked_at TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
+    CREATE TABLE IF NOT EXISTS fuel_transactions (
+        id SERIAL PRIMARY KEY,
+        vehicle VARCHAR(50),
+        object_name VARCHAR(100),
+        entry_type VARCHAR(20),
+        liters NUMERIC,
+        odometer INTEGER,
+        entered_by VARCHAR(100),
+        driver_confirmed BOOLEAN DEFAULT FALSE,
+        dispatcher_status VARCHAR(20) DEFAULT 'new',
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
     """)
 
     conn.commit()
@@ -43,19 +43,19 @@ def home():
     if request.method == "POST":
         vehicle = request.form["vehicle"]
         object_name = request.form["object"]
+        entry_type = request.form["entry_type"]
         liters = request.form["liters"]
         odometer = request.form["odometer"]
         entered_by = request.form["entered_by"]
-        comment = request.form.get("comment", "")
 
         conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
-            INSERT INTO fuel_transactions
-            (vehicle, object_name, liters, odometer, entered_by, comment, status)
-            VALUES (%s, %s, %s, %s, %s, %s, 'new')
-        """, (vehicle, object_name, liters, odometer, entered_by, comment))
+        INSERT INTO fuel_transactions
+        (vehicle, object_name, entry_type, liters, odometer, entered_by)
+        VALUES (%s,%s,%s,%s,%s,%s)
+        """, (vehicle, object_name, entry_type, liters, odometer, entered_by))
 
         conn.commit()
         cur.close()
@@ -67,136 +67,114 @@ def home():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, vehicle, object_name, liters, odometer, entered_by,
-               status, comment, checked_by, checked_at, created_at
-        FROM fuel_transactions
-        ORDER BY id DESC
+    SELECT id, vehicle, object_name, entry_type, liters, odometer,
+           entered_by, driver_confirmed, dispatcher_status
+    FROM fuel_transactions
+    ORDER BY id DESC
     """)
-    transactions = cur.fetchall()
+
+    rows = cur.fetchall()
 
     cur.close()
     conn.close()
 
     html = """
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>ГСМ назорати</title>
-    </head>
-    <body style="font-family: Arial; padding: 20px;">
-        <h2>ГСМ заправка киритиш</h2>
+    <h2>Заправка киритиш</h2>
 
-        <form method="post" style="margin-bottom: 30px;">
-            <label>Машина:</label><br>
-            <input name="vehicle" required><br><br>
+    <form method="post">
 
-            <label>Объект:</label><br>
-            <input name="object" required><br><br>
+    Машина:<br>
+    <input name="vehicle"><br><br>
 
-            <label>Литр:</label><br>
-            <input name="liters" type="number" step="0.01" required><br><br>
+    Объект:<br>
+    <input name="object"><br><br>
 
-            <label>Одометр:</label><br>
-            <input name="odometer" type="number"><br><br>
+    Тури:<br>
+    <select name="entry_type">
+        <option value="internal">Ички объект</option>
+        <option value="external">Ташқи объект</option>
+    </select><br><br>
 
-            <label>Ким киритди:</label><br>
-            <input name="entered_by" required><br><br>
+    Литр:<br>
+    <input name="liters"><br><br>
 
-            <label>Изоҳ:</label><br>
-            <textarea name="comment" rows="3" cols="40"></textarea><br><br>
+    Одометр:<br>
+    <input name="odometer"><br><br>
 
-            <button type="submit">Сақлаш</button>
-        </form>
+    Ким киритди:<br>
+    <input name="entered_by"><br><br>
 
-        <h2>Заправка журнали</h2>
+    <button>Сақлаш</button>
 
-        <table border="1" cellpadding="8" cellspacing="0">
-            <tr>
-                <th>ID</th>
-                <th>Машина</th>
-                <th>Объект</th>
-                <th>Литр</th>
-                <th>Одометр</th>
-                <th>Киритган</th>
-                <th>Статус</th>
-                <th>Изоҳ</th>
-                <th>Текширган</th>
-                <th>Текширилган вақт</th>
-                <th>Сана</th>
-                <th>Амал</th>
-            </tr>
+    </form>
+
+    <h2>Журнал</h2>
+
+    <table border="1" cellpadding="8">
+
+    <tr>
+    <th>ID</th>
+    <th>Машина</th>
+    <th>Объект</th>
+    <th>Тури</th>
+    <th>Литр</th>
+    <th>Одометр</th>
+    <th>Киритган</th>
+    <th>Driver OK</th>
+    <th>АТС статус</th>
+    <th>Амал</th>
+    </tr>
     """
 
-    for t in transactions:
-        tx_id = t[0]
-        vehicle = t[1]
-        object_name = t[2]
-        liters = t[3]
-        odometer = t[4] if t[4] is not None else ""
-        entered_by = t[5] if t[5] else ""
-        status = t[6] if t[6] else ""
-        comment = t[7] if t[7] else ""
-        checked_by = t[8] if t[8] else ""
-        checked_at = t[9] if t[9] else ""
-        created_at = t[10] if t[10] else ""
+    for r in rows:
 
         actions = ""
-        if status == "new":
-            actions = f"""
-                <form method="post" action="/approve/{tx_id}" style="display:inline;">
-                    <input name="checked_by" placeholder="Диспетчер" required>
-                    <button type="submit">Тасдиқлаш</button>
-                </form>
 
-                <form method="post" action="/reject/{tx_id}" style="display:inline; margin-left:5px;">
-                    <input name="checked_by" placeholder="Диспетчер" required>
-                    <input name="comment" placeholder="Сабаб" required>
-                    <button type="submit">Рад этиш</button>
-                </form>
+        if not r[7]:
+            actions += f"""
+            <form method='post' action='/driver_confirm/{r[0]}' style='display:inline'>
+            <button>Driver OK</button>
+            </form>
             """
-        else:
-            actions = "-"
+
+        if r[8] == "new":
+            actions += f"""
+            <form method='post' action='/approve/{r[0]}' style='display:inline'>
+            <button>АТС тасдиқ</button>
+            </form>
+            """
 
         html += f"""
-            <tr>
-                <td>{tx_id}</td>
-                <td>{vehicle}</td>
-                <td>{object_name}</td>
-                <td>{liters}</td>
-                <td>{odometer}</td>
-                <td>{entered_by}</td>
-                <td>{status}</td>
-                <td>{comment}</td>
-                <td>{checked_by}</td>
-                <td>{checked_at}</td>
-                <td>{created_at}</td>
-                <td>{actions}</td>
-            </tr>
+        <tr>
+        <td>{r[0]}</td>
+        <td>{r[1]}</td>
+        <td>{r[2]}</td>
+        <td>{r[3]}</td>
+        <td>{r[4]}</td>
+        <td>{r[5]}</td>
+        <td>{r[6]}</td>
+        <td>{r[7]}</td>
+        <td>{r[8]}</td>
+        <td>{actions}</td>
+        </tr>
         """
 
-    html += """
-        </table>
-    </body>
-    </html>
-    """
+    html += "</table>"
 
     return html
 
 
-@app.route("/approve/<int:tx_id>", methods=["POST"])
-def approve(tx_id):
-    checked_by = request.form["checked_by"]
+@app.route("/driver_confirm/<int:id>", methods=["POST"])
+def driver_confirm(id):
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
-        UPDATE fuel_transactions
-        SET status = 'approved',
-            checked_by = %s,
-            checked_at = CURRENT_TIMESTAMP
-        WHERE id = %s
-    """, (checked_by, tx_id))
+    UPDATE fuel_transactions
+    SET driver_confirmed = TRUE
+    WHERE id = %s
+    """, (id,))
 
     conn.commit()
     cur.close()
@@ -205,22 +183,17 @@ def approve(tx_id):
     return redirect("/")
 
 
-@app.route("/reject/<int:tx_id>", methods=["POST"])
-def reject(tx_id):
-    checked_by = request.form["checked_by"]
-    comment = request.form["comment"]
+@app.route("/approve/<int:id>", methods=["POST"])
+def approve(id):
 
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
-        UPDATE fuel_transactions
-        SET status = 'rejected',
-            checked_by = %s,
-            checked_at = CURRENT_TIMESTAMP,
-            comment = %s
-        WHERE id = %s
-    """, (checked_by, comment, tx_id))
+    UPDATE fuel_transactions
+    SET dispatcher_status = 'approved'
+    WHERE id = %s
+    """, (id,))
 
     conn.commit()
     cur.close()
