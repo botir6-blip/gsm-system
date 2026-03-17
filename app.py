@@ -6,10 +6,8 @@ app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-
 def get_connection():
     return psycopg2.connect(DATABASE_URL)
-
 
 def init_db():
     conn = get_connection()
@@ -35,10 +33,34 @@ def init_db():
     cur.close()
     conn.close()
 
+init_db()
 
+def ensure_entry_type_column():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='fuel_transactions' AND column_name='entry_type';
+    """)
+    exists = cur.fetchone()
+
+    if not exists:
+        cur.execute("""
+            ALTER TABLE fuel_transactions
+            ADD COLUMN entry_type VARCHAR(20) DEFAULT 'internal';
+        """)
+        conn.commit()
+        print("✅ entry_type устуни қўшилди")
+    else:
+        print("✅ entry_type устуни аллақачон бор")
+
+    cur.close()
+    conn.close()
+    
 @app.route("/", methods=["GET", "POST"])
 def home():
-    init_db()
 
     if request.method == "POST":
         vehicle = request.form["vehicle"]
