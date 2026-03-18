@@ -20,7 +20,7 @@ def init_db():
         id SERIAL PRIMARY KEY,
         vehicle VARCHAR(50),
         object_name VARCHAR(100),
-        entry_type VARCHAR(20),
+        entry_type VARCHAR(20) DEFAULT 'internal',
         liters NUMERIC,
         odometer INTEGER,
         entered_by VARCHAR(100),
@@ -61,8 +61,34 @@ def ensure_entry_type_column():
     conn.close()
 
 
+def ensure_comment_column():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='fuel_transactions' AND column_name='comment';
+    """)
+    exists = cur.fetchone()
+
+    if not exists:
+        cur.execute("""
+            ALTER TABLE fuel_transactions
+            ADD COLUMN comment TEXT;
+        """)
+        conn.commit()
+        print("✅ comment устуни қўшилди")
+    else:
+        print("✅ comment устуни аллақачон бор")
+
+    cur.close()
+    conn.close()
+
+
 init_db()
 ensure_entry_type_column()
+ensure_comment_column()
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -78,14 +104,18 @@ def home():
         if not vehicle or not object_name or not liters or not odometer or not entered_by:
             return "❌ Барча майдонларни тўлдиринг"
 
+        driver_confirmed = False
+        if entry_type == "external":
+            driver_confirmed = True
+
         conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
         INSERT INTO fuel_transactions
-        (vehicle, object_name, entry_type, liters, odometer, entered_by)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """, (vehicle, object_name, entry_type, liters, odometer, entered_by))
+        (vehicle, object_name, entry_type, liters, odometer, entered_by, driver_confirmed)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (vehicle, object_name, entry_type, liters, odometer, entered_by, driver_confirmed))
 
         conn.commit()
         cur.close()
@@ -98,7 +128,7 @@ def home():
 
     cur.execute("""
     SELECT id, vehicle, object_name, entry_type, liters, odometer,
-           entered_by, driver_confirmed, dispatcher_status
+           entered_by, driver_confirmed, dispatcher_status, comment
     FROM fuel_transactions
     ORDER BY id DESC
     """)
@@ -109,85 +139,189 @@ def home():
     conn.close()
 
     html = """
-    <h2>Заправка киритиш</h2>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Заправка журнали</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                padding: 20px;
+                background: #f7f7f7;
+            }
+            h2 {
+                margin-bottom: 10px;
+            }
+            form {
+                margin: 0;
+            }
+            input, select, textarea, button {
+                padding: 8px;
+                margin-top: 4px;
+                margin-bottom: 10px;
+                width: 300px;
+                max-width: 100%;
+            }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                background: white;
+            }
+            th, td {
+                border: 1px solid #ccc;
+                padding: 8px;
+                text-align: left;
+                vertical-align: top;
+            }
+            th {
+                background: #eee;
+            }
+            .status-new {
+                background-color: #fff3cd;
+                font-weight: bold;
+            }
+            .status-approved {
+                background-color: #d4edda;
+                font-weight: bold;
+            }
+            .status-rejected {
+                background-color: #f8d7da;
+                font-weight: bold;
+            }
+            .btn-inline {
+                display: inline-block;
+                width: auto;
+                margin-right: 5px;
+                margin-bottom: 5px;
+            }
+            .small-textarea {
+                width: 220px;
+                height: 60px;
+            }
+            .section {
+                background: white;
+                padding: 15px;
+                margin-bottom: 20px;
+                border: 1px solid #ddd;
+            }
+        </style>
+    </head>
+    <body>
 
-    <form method="post">
+    <div class="section">
+        <h2>Заправка киритиш</h2>
 
-    Машина:<br>
-    <input name="vehicle" required><br><br>
+        <form method="post">
+            Машина:<br>
+            <input name="vehicle" required><br>
 
-    Объект:<br>
-    <input name="object" required><br><br>
+            Объект:<br>
+            <input name="object" required><br>
 
-    Тури:<br>
-    <select name="entry_type">
-        <option value="internal">Ички объект</option>
-        <option value="external">Ташқи объект</option>
-    </select><br><br>
+            Тури:<br>
+            <select name="entry_type">
+                <option value="internal">Ички объект</option>
+                <option value="external">Ташқи объект</option>
+            </select><br>
 
-    Литр:<br>
-    <input name="liters" type="number" step="0.01" required><br><br>
+            Литр:<br>
+            <input name="liters" type="number" step="0.01" required><br>
 
-    Одометр:<br>
-    <input name="odometer" type="number" required><br><br>
+            Одометр:<br>
+            <input name="odometer" type="number" required><br>
 
-    Ким киритди:<br>
-    <input name="entered_by" required><br><br>
+            Ким киритди:<br>
+            <input name="entered_by" required><br>
 
-    <button type="submit">Сақлаш</button>
+            <button type="submit">Сақлаш</button>
+        </form>
+    </div>
 
-    </form>
+    <div class="section">
+        <h2>Журнал</h2>
 
-    <h2>Журнал</h2>
-
-    <table border="1" cellpadding="8">
-    <tr>
-    <th>ID</th>
-    <th>Машина</th>
-    <th>Объект</th>
-    <th>Тури</th>
-    <th>Литр</th>
-    <th>Одометр</th>
-    <th>Киритган</th>
-    <th>Driver OK</th>
-    <th>АТС статус</th>
-    <th>Амал</th>
-    </tr>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Машина</th>
+                <th>Объект</th>
+                <th>Тури</th>
+                <th>Литр</th>
+                <th>Одометр</th>
+                <th>Киритган</th>
+                <th>Ҳайдовчи</th>
+                <th>АТС статус</th>
+                <th>Изоҳ</th>
+                <th>Амал</th>
+            </tr>
     """
 
     for r in rows:
+        row_id = r[0]
+        vehicle = r[1]
+        object_name = r[2]
+        entry_type = r[3]
+        liters = r[4]
+        odometer = r[5]
+        entered_by = r[6]
+        driver_confirmed = r[7]
+        dispatcher_status = r[8]
+        comment = r[9] or ""
+
         actions = ""
 
-        if not r[7]:
+        if entry_type == "internal" and not driver_confirmed and dispatcher_status == "new":
             actions += f"""
-            <form method='post' action='/driver_confirm/{r[0]}' style='display:inline'>
-                <button type='submit'>Driver OK</button>
+            <form method='post' action='/driver_confirm/{row_id}' style='display:inline;'>
+                <button class='btn-inline' type='submit'>Ҳайдовчи тасдиғи</button>
             </form>
             """
 
-        if r[8] == "new":
+        if dispatcher_status == "new" and driver_confirmed:
             actions += f"""
-            <form method='post' action='/approve/{r[0]}' style='display:inline'>
-                <button type='submit'>АТС тасдиқ</button>
+            <form method='post' action='/approve/{row_id}' style='display:inline;'>
+                <button class='btn-inline' type='submit'>АТС тасдиқ</button>
+            </form>
+
+            <form method='post' action='/reject/{row_id}' style='display:inline; margin-top:5px;'>
+                <textarea class='small-textarea' name='comment' placeholder='Рад этиш сабаби'></textarea><br>
+                <button class='btn-inline' type='submit'>Рад этиш</button>
             </form>
             """
+
+        if dispatcher_status == "approved":
+            status_class = "status-approved"
+            status_text = "✅ Тасдиқланган"
+        elif dispatcher_status == "rejected":
+            status_class = "status-rejected"
+            status_text = "❌ Рад этилган"
+        else:
+            status_class = "status-new"
+            status_text = "⏳ Янги"
 
         html += f"""
         <tr>
-        <td>{r[0]}</td>
-        <td>{r[1]}</td>
-        <td>{r[2]}</td>
-        <td>{r[3]}</td>
-        <td>{r[4]}</td>
-        <td>{r[5]}</td>
-        <td>{r[6]}</td>
-        <td>{'✅' if r[7] else '❌'}</td>
-        <td>{r[8]}</td>
-        <td>{actions}</td>
+            <td>{row_id}</td>
+            <td>{vehicle}</td>
+            <td>{object_name}</td>
+            <td>{'Ички' if entry_type == 'internal' else 'Ташқи'}</td>
+            <td>{liters}</td>
+            <td>{odometer}</td>
+            <td>{entered_by}</td>
+            <td>{'✅' if driver_confirmed else '❌'}</td>
+            <td class="{status_class}">{status_text}</td>
+            <td>{comment}</td>
+            <td>{actions}</td>
         </tr>
         """
 
-    html += "</table>"
+    html += """
+        </table>
+    </div>
+
+    </body>
+    </html>
+    """
 
     return html
 
@@ -217,9 +351,31 @@ def approve(id):
 
     cur.execute("""
     UPDATE fuel_transactions
-    SET dispatcher_status = 'approved'
+    SET dispatcher_status = 'approved',
+        comment = NULL
     WHERE id = %s
     """, (id,))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return redirect("/")
+
+
+@app.route("/reject/<int:id>", methods=["POST"])
+def reject(id):
+    comment = request.form.get("comment", "").strip()
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+    UPDATE fuel_transactions
+    SET dispatcher_status = 'rejected',
+        comment = %s
+    WHERE id = %s
+    """, (comment, id))
 
     conn.commit()
     cur.close()
