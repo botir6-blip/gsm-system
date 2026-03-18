@@ -91,6 +91,54 @@ init_db()
 ensure_entry_type_column()
 ensure_comment_column()
 
+def ensure_driver_confirmed_column():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='fuel_transactions' AND column_name='driver_confirmed';
+    """)
+    exists = cur.fetchone()
+
+    if not exists:
+        cur.execute("""
+            ALTER TABLE fuel_transactions
+            ADD COLUMN driver_confirmed BOOLEAN DEFAULT FALSE;
+        """)
+        conn.commit()
+        print("✅ driver_confirmed устуни қўшилди")
+    else:
+        print("✅ driver_confirmed устуни аллақачон бор")
+
+    cur.close()
+    conn.close()
+
+
+def ensure_dispatcher_status_column():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='fuel_transactions' AND column_name='dispatcher_status';
+    """)
+    exists = cur.fetchone()
+
+    if not exists:
+        cur.execute("""
+            ALTER TABLE fuel_transactions
+            ADD COLUMN dispatcher_status VARCHAR(20) DEFAULT 'new';
+        """)
+        conn.commit()
+        print("✅ dispatcher_status устуни қўшилди")
+    else:
+        print("✅ dispatcher_status устуни аллақачон бор")
+
+    cur.close()
+    conn.close()
 
 @app.route("/", methods=["GET", "POST"])
 def home():
