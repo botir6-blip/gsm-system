@@ -94,50 +94,56 @@ ensure_comment_column()
 
 @app.route("/", methods=["GET", "POST"])
 def home():
-    if request.method == "POST":
-        vehicle = request.form.get("vehicle", "").strip()
-        object_name = request.form.get("object", "").strip()
-        entry_type = request.form.get("entry_type", "internal").strip()
-        liters = request.form.get("liters", "").strip()
-        odometer = request.form.get("odometer", "").strip()
-        entered_by = request.form.get("entered_by", "").strip()
+    try:
+        if request.method == "POST":
+            vehicle = request.form.get("vehicle", "").strip()
+            object_name = request.form.get("object", "").strip()
+            entry_type = request.form.get("entry_type", "internal").strip()
+            liters = request.form.get("liters", "").strip()
+            odometer = request.form.get("odometer", "").strip()
+            entered_by = request.form.get("entered_by", "").strip()
 
-        if not vehicle or not object_name or not liters or not odometer or not entered_by:
-            return "❌ Барча майдонларни тўлдиринг"
+            if not vehicle or not object_name or not liters or not odometer or not entered_by:
+                return "❌ Барча майдонларни тўлдиринг"
 
-        driver_confirmed = False
-        if entry_type == "external":
-            driver_confirmed = True
+            driver_confirmed = False
+            if entry_type == "external":
+                driver_confirmed = True
+
+            conn = get_connection()
+            cur = conn.cursor()
+
+            cur.execute("""
+            INSERT INTO fuel_transactions
+            (vehicle, object_name, entry_type, liters, odometer, entered_by, driver_confirmed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (vehicle, object_name, entry_type, liters, odometer, entered_by, driver_confirmed))
+
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            return redirect("/")
 
         conn = get_connection()
         cur = conn.cursor()
 
         cur.execute("""
-        INSERT INTO fuel_transactions
-        (vehicle, object_name, entry_type, liters, odometer, entered_by, driver_confirmed)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (vehicle, object_name, entry_type, liters, odometer, entered_by, driver_confirmed))
+        SELECT id, vehicle, object_name, entry_type, liters, odometer,
+               entered_by, driver_confirmed, dispatcher_status, comment
+        FROM fuel_transactions
+        ORDER BY id DESC
+        """)
 
-        conn.commit()
+        rows = cur.fetchall()
+
         cur.close()
         conn.close()
 
-        return redirect("/")
+        return str(rows)
 
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-    SELECT id, vehicle, object_name, entry_type, liters, odometer,
-           entered_by, driver_confirmed, dispatcher_status, comment
-    FROM fuel_transactions
-    ORDER BY id DESC
-    """)
-
-    rows = cur.fetchall()
-
-    cur.close()
-    conn.close()
+    except Exception as e:
+        return f"XATO: {str(e)}"
 
     html = """
     <html>
