@@ -590,7 +590,7 @@ def render_record(item, role=None):
         <div class="meta">
             <div class="meta-item"><b>Объект</b>{safe(item['object_name'])}</div>
             <div class="meta-item"><b>Литры</b>{safe(item['liters'])}</div>
-            <div class="meta-item"><b>Одометр</b>{safe(item['odometer'])}</div>
+            <div class="meta-item"><b>Спидометр</b>{safe(item['odometer'])}</div>
             <div class="meta-item"><b>Кто внес</b>{safe(item['entered_by'])}</div>
             <div class="meta-item"><b>Дата</b>{safe(item['created_at'])}</div>
             {comment_html}
@@ -818,7 +818,7 @@ def new_entry():
                     <input name="liters" type="number" step="0.01" placeholder="Например 120" required>
                 </div>
                 <div>
-                    <label>Одометр</label>
+                    <label>Спидометр</label>
                     <input name="odometer" type="number" placeholder="Например 152340">
                 </div>
                 <div>
@@ -1020,7 +1020,7 @@ def journal():
                 <th>Объект</th>
                 <th>Тип</th>
                 <th>Литры</th>
-                <th>Одометр</th>
+                <th>Спидометр</th>
                 <th>Кто внес</th>
                 <th>Статус</th>
                 <th>Комментарий</th>
