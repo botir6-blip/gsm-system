@@ -101,18 +101,37 @@ def init_db():
     )
     """)
 
+    # USERS (фақат битта!)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            full_name VARCHAR(100),
-            username VARCHAR(50) UNIQUE,
-            password VARCHAR(255),
-            role VARCHAR(50),
-            company_id INTEGER,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        full_name VARCHAR(150) NOT NULL,
+        username VARCHAR(100) NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role VARCHAR(30) NOT NULL,
+        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
     """)
+
+    conn.commit()
+
+    # ADMIN
+    cur.execute("SELECT * FROM users WHERE username=%s", ("admin",))
+    admin = cur.fetchone()
+
+    if not admin:
+        cur.execute("""
+            INSERT INTO users (full_name, username, password_hash, role, is_active)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            "Administrator",
+            "admin",
+            generate_password_hash("admin123"),
+            "admin",
+            True
+        ))
     
     # objects
     cur.execute("""
@@ -133,20 +152,6 @@ def init_db():
         plate_number VARCHAR(50) NOT NULL,
         plate_number_normalized VARCHAR(50),
         company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    # users
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        full_name VARCHAR(150) NOT NULL,
-        username VARCHAR(100) NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        role VARCHAR(30) NOT NULL,
-        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
