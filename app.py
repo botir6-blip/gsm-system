@@ -1,7 +1,7 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import Flask, request, redirect, url_for
+from flask import Flask, request, redirect
 
 app = Flask(__name__)
 
@@ -39,11 +39,11 @@ def init_tables():
         odometer INTEGER,
         entered_by VARCHAR(100),
 
-        manager_status VARCHAR(20) DEFAULT 'new',      -- new / approved / rejected
-        fueled BOOLEAN DEFAULT FALSE,                  -- выдано ли топливо
-        driver_confirmed BOOLEAN DEFAULT FALSE,        -- подтвердил ли водитель
-        dispatcher_status VARCHAR(20) DEFAULT 'new',   -- new / approved / rejected
-        closed BOOLEAN DEFAULT FALSE,                  -- закрыта ли операция
+        manager_status VARCHAR(20) DEFAULT 'new',
+        fueled BOOLEAN DEFAULT FALSE,
+        driver_confirmed BOOLEAN DEFAULT FALSE,
+        dispatcher_status VARCHAR(20) DEFAULT 'new',
+        closed BOOLEAN DEFAULT FALSE,
 
         comment TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -96,6 +96,16 @@ def fetch_all(query, params=None):
     cur.close()
     conn.close()
     return rows
+
+
+def fetch_one(query, params=None):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(query, params or ())
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
 
 
 def execute(query, params=None):
@@ -423,7 +433,6 @@ def render_record(item, role=None):
 
     actions = ""
 
-    # manager
     if role == "manager":
         actions = f"""
         <div class="actions">
@@ -436,8 +445,6 @@ def render_record(item, role=None):
             </form>
         </div>
         """
-
-    # fueler
     elif role == "fueler":
         actions = f"""
         <div class="actions">
@@ -446,8 +453,6 @@ def render_record(item, role=None):
             </form>
         </div>
         """
-
-    # driver
     elif role == "driver":
         actions = f"""
         <div class="actions">
@@ -456,8 +461,6 @@ def render_record(item, role=None):
             </form>
         </div>
         """
-
-    # dispatcher
     elif role == "dispatcher":
         actions = f"""
         <div class="actions">
@@ -558,7 +561,7 @@ def dashboard():
         </div>
         <div class="card">
             <h3>Для заправщика</h3>
-            <p>Отображаются только подтвержденные заявки на выдачу топлива.</p>
+            <p>Только заявки на выдачу топлива.</p>
             <a href="/role/fueler"><button class="btn-primary">Открыть задачи</button></a>
         </div>
         <div class="card">
@@ -568,8 +571,9 @@ def dashboard():
         </div>
         <div class="card">
             <h3>Для АТС</h3>
-            <p>Финальная проверка и закрытие операций.</p>
+            <p>Проверка операций и управление транспортом.</p>
             <a href="/role/dispatcher"><button class="btn-danger">Открыть задачи</button></a>
+            <a href="/vehicles"><button class="btn-gray">Транспорт</button></a>
         </div>
     </div>
     """
@@ -623,7 +627,7 @@ def new_entry():
         return redirect("/role/requester")
 
     vehicles = fetch_all("""
-        SELECT vehicle_name
+        SELECT vehicle_name, plate_number, object_name
         FROM vehicles
         WHERE is_active=TRUE
         ORDER BY vehicle_name
@@ -631,7 +635,11 @@ def new_entry():
 
     options = "<option value=''>Выберите транспорт</option>"
     for v in vehicles:
-        options += f"<option value='{safe(v['vehicle_name'])}'>{safe(v['vehicle_name'])}</option>"
+        title = safe(v["vehicle_name"])
+        plate = safe(v["plate_number"])
+        obj = safe(v["object_name"])
+        label = f"{title} | {plate} | {obj}"
+        options += f"<option value='{title}'>{label}</option>"
 
     content = f"""
     <div class="page-title">Новая запись</div>
@@ -683,10 +691,7 @@ def new_entry():
 @app.route("/role/requester")
 def role_requester():
     q = request.args.get("q", "").strip()
-    query = """
-        SELECT *
-        FROM fuel_transactions
-    """
+    query = "SELECT * FROM fuel_transactions"
     params = []
 
     if q:
@@ -812,7 +817,12 @@ def role_dispatcher():
 
     content = f"""
     <div class="page-title">Раздел АТС</div>
-    <div class="sub">Финальная проверка и закрытие операций</div>
+    <div class="sub">Финальная проверка и закрытие операций. Также АТС может управлять транспортом.</div>
+
+    <div style="margin-bottom:16px;">
+        <a href="/vehicles"><button class="btn-gray">Перейти в раздел транспорта</button></a>
+    </div>
+
     {records}
     """
     return render_layout("АТС", content, active="dispatcher")
@@ -882,8 +892,8 @@ def vehicles():
 
         if name:
             execute("""
-                INSERT INTO vehicles (vehicle_name, plate_number, object_name)
-                VALUES (%s, %s, %s)
+                INSERT INTO vehicles (vehicle_name, plate_number, object_name, is_active)
+                VALUES (%s, %s, %s, TRUE)
             """, (name, plate, obj))
 
         return redirect("/vehicles")
@@ -896,29 +906,40 @@ def vehicles():
 
     table_rows = ""
     for r in rows:
+        status = badge("Активен", "green") if r["is_active"] else badge("Неактивен", "red")
+
         table_rows += f"""
         <tr>
             <td>{r['id']}</td>
             <td>{safe(r['vehicle_name'])}</td>
             <td>{safe(r['plate_number'])}</td>
             <td>{safe(r['object_name'])}</td>
-            <td>{"Да" if r['is_active'] else "Нет"}</td>
+            <td>{status}</td>
+            <td>
+                <a href="/vehicles/edit/{r['id']}"><button class="btn-primary" type="button">Редактировать</button></a>
+                <form method="post" action="/vehicles/toggle/{r['id']}" style="display:inline-block;">
+                    <button class="btn-gray" type="submit">
+                        {"Сделать неактивным" if r["is_active"] else "Сделать активным"}
+                    </button>
+                </form>
+            </td>
         </tr>
         """
 
     if not table_rows:
-        table_rows = '<tr><td colspan="5">Нет транспорта</td></tr>'
+        table_rows = '<tr><td colspan="6">Транспорт пока не добавлен</td></tr>'
 
     content = f"""
     <div class="page-title">Транспорт</div>
-    <div class="sub">Добавление и просмотр транспорта</div>
+    <div class="sub">АТС может добавлять, редактировать и отключать транспорт</div>
 
     <div class="card">
+        <h3>Добавить транспорт</h3>
         <form method="post">
             <div class="form-grid">
                 <div>
                     <label>Наименование</label>
-                    <input name="name" placeholder="Например: КамАЗ 6520">
+                    <input name="name" placeholder="Например: КамАЗ 6520" required>
                 </div>
                 <div>
                     <label>Госномер</label>
@@ -930,25 +951,116 @@ def vehicles():
                 </div>
             </div>
             <div style="margin-top:16px;">
-                <button class="btn-primary" type="submit">Сохранить транспорт</button>
+                <button class="btn-success" type="submit">Добавить транспорт</button>
             </div>
         </form>
     </div>
 
     <div class="card">
+        <h3>Список транспорта</h3>
         <table>
             <tr>
                 <th>ID</th>
                 <th>Наименование</th>
                 <th>Госномер</th>
                 <th>Объект</th>
-                <th>Активен</th>
+                <th>Статус</th>
+                <th>Действия</th>
             </tr>
             {table_rows}
         </table>
     </div>
     """
     return render_layout("Транспорт", content, active="vehicles")
+
+
+@app.route("/vehicles/edit/<int:vehicle_id>", methods=["GET", "POST"])
+def edit_vehicle(vehicle_id):
+    vehicle = fetch_one("""
+        SELECT *
+        FROM vehicles
+        WHERE id=%s
+    """, (vehicle_id,))
+
+    if not vehicle:
+        return redirect("/vehicles")
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        plate = request.form.get("plate", "").strip()
+        obj = request.form.get("object", "").strip()
+        is_active = request.form.get("is_active") == "true"
+
+        if name:
+            execute("""
+                UPDATE vehicles
+                SET vehicle_name=%s,
+                    plate_number=%s,
+                    object_name=%s,
+                    is_active=%s
+                WHERE id=%s
+            """, (name, plate, obj, is_active, vehicle_id))
+
+        return redirect("/vehicles")
+
+    checked_true = "selected" if vehicle["is_active"] else ""
+    checked_false = "selected" if not vehicle["is_active"] else ""
+
+    content = f"""
+    <div class="page-title">Редактирование транспорта</div>
+    <div class="sub">Здесь можно изменить название, госномер, объект и статус транспорта</div>
+
+    <div class="card">
+        <form method="post">
+            <div class="form-grid">
+                <div>
+                    <label>Наименование</label>
+                    <input name="name" value="{safe(vehicle['vehicle_name'])}" required>
+                </div>
+                <div>
+                    <label>Госномер</label>
+                    <input name="plate" value="{safe(vehicle['plate_number'])}">
+                </div>
+                <div>
+                    <label>Объект</label>
+                    <input name="object" value="{safe(vehicle['object_name'])}">
+                </div>
+                <div>
+                    <label>Статус</label>
+                    <select name="is_active">
+                        <option value="true" {checked_true}>Активен</option>
+                        <option value="false" {checked_false}>Неактивен</option>
+                    </select>
+                </div>
+            </div>
+
+            <div style="margin-top:16px;" class="actions">
+                <button class="btn-primary" type="submit">Сохранить изменения</button>
+                <a href="/vehicles"><button class="btn-gray" type="button">Назад</button></a>
+            </div>
+        </form>
+    </div>
+    """
+    return render_layout("Редактирование транспорта", content, active="vehicles")
+
+
+@app.route("/vehicles/toggle/<int:vehicle_id>", methods=["POST"])
+def toggle_vehicle(vehicle_id):
+    vehicle = fetch_one("""
+        SELECT is_active
+        FROM vehicles
+        WHERE id=%s
+    """, (vehicle_id,))
+
+    if vehicle:
+        new_status = not vehicle["is_active"]
+        execute("""
+            UPDATE vehicles
+            SET is_active=%s
+            WHERE id=%s
+        """, (new_status, vehicle_id))
+
+    return redirect("/vehicles")
 
 
 # ================= ACTIONS =================
