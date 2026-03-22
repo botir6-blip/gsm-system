@@ -1903,10 +1903,20 @@ def fuel_request(request_id):
 
         execute_query("""
             INSERT INTO fuel_transactions (
-                vehicle_id, object_id, entry_type, liters, speedometer, entered_by, comment
+                vehicle,
+                object_name,
+                vehicle_id,
+                object_id,
+                entry_type,
+                liters,
+                speedometer,
+                entered_by,
+                comment
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
+            f"{r['brand']} / {r['vehicle_type']} / {r['plate_number']}",
+            r["object_name"],
             r["vehicle_id"],
             r["object_id"],
             "chiqim",
