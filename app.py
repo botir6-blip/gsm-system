@@ -27,7 +27,6 @@ def normalize_plate(plate: str) -> str:
     cleaned = "".join(ch for ch in plate.upper() if ch.isalnum())
     return cleaned
 
-
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
@@ -71,7 +70,7 @@ def init_db():
         id SERIAL PRIMARY KEY,
         vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
         object_id INTEGER REFERENCES objects(id) ON DELETE SET NULL,
-        entry_type VARCHAR(20) NOT NULL, -- kirim / chiqim
+        entry_type VARCHAR(20) NOT NULL,
         liters NUMERIC(10,2) NOT NULL DEFAULT 0,
         speedometer INTEGER,
         entered_by VARCHAR(100),
@@ -79,6 +78,50 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    # ===== MIGRATIONS =====
+
+    # vehicles.company_id
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='vehicles' AND column_name='company_id';
+    """)
+    if not cur.fetchone():
+        cur.execute("""
+            ALTER TABLE vehicles
+            ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL;
+        """)
+
+    # vehicles.plate_number_normalized
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='vehicles' AND column_name='plate_number_normalized';
+    """)
+    if not cur.fetchone():
+        cur.execute("""
+            ALTER TABLE vehicles
+            ADD COLUMN plate_number_normalized VARCHAR(50);
+        """)
+
+        cur.execute("""
+            UPDATE vehicles
+            SET plate_number_normalized = UPPER(REGEXP_REPLACE(plate_number, '[^A-Za-z0-9]', '', 'g'))
+            WHERE plate_number_normalized IS NULL;
+        """)
+
+    # objects.company_id
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='objects' AND column_name='company_id';
+    """)
+    if not cur.fetchone():
+        cur.execute("""
+            ALTER TABLE objects
+            ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+        """)
 
     conn.commit()
     cur.close()
