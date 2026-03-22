@@ -1,6 +1,6 @@
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 from flask import Flask, request, redirect, url_for, render_template_string, flash
 
 app = Flask(__name__)
@@ -13,7 +13,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 # DB
 # =========================
 def get_connection():
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+    return psycopg.connect(DATABASE_URL, sslmode="require", row_factory=dict_row)
 
 
 def normalize_plate(plate: str) -> str:
@@ -24,7 +24,7 @@ def normalize_plate(plate: str) -> str:
 
 def fetch_all(query, params=None):
     conn = get_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor()
     cur.execute(query, params or ())
     rows = cur.fetchall()
     cur.close()
@@ -34,7 +34,7 @@ def fetch_all(query, params=None):
 
 def fetch_one(query, params=None):
     conn = get_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor()
     cur.execute(query, params or ())
     row = cur.fetchone()
     cur.close()
