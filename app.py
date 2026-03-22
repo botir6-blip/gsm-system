@@ -1812,7 +1812,7 @@ def approve_request(request_id):
         <form method="POST">
             <input type="text" name="approved_by" placeholder="Кто рассматривает / разрешает" value="{current_user()['full_name']}" required>
             <input type="number" step="0.01" name="approved_liters" placeholder="Разрешено литров">
-            <input type="text" name="fuel_supplier" placeholder="Кто обеспечивает дизель">
+            <input type="text" name="fuel_supplier" placeholder="За кем числится топливо">
             <textarea name="approval_comment" placeholder="Комментарий руководителя"></textarea>
             <button type="submit" name="action" value="approve">Разрешить заявку</button>
             <button class="btn-red" type="submit" name="action" value="reject">Отклонить заявку</button>
