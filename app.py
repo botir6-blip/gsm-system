@@ -125,6 +125,8 @@ def init_db():
         cur.execute("""
             INSERT INTO users (full_name, username, password_hash, role, is_active)
             VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (username)
+            DO UPDATE SET password_hash = EXCLUDED.password_hash
         """, (
             "Administrator",
             "admin",
