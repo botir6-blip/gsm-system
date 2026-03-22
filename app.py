@@ -8,9 +8,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-init_db()   # 👈 МАНА ШУНИ ҚЎШИНГ
-
-
 # =========================
 # DATABASE
 # =========================
@@ -731,6 +728,7 @@ def transactions_page():
     """
     return render_page("ГСМ журнали", content)
 
+init_db()
 
 @app.route("/transactions/delete/<int:tx_id>")
 def delete_transaction(tx_id):
