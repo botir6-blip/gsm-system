@@ -101,6 +101,19 @@ def init_db():
     )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            full_name VARCHAR(100),
+            username VARCHAR(50) UNIQUE,
+            password VARCHAR(255),
+            role VARCHAR(50),
+            company_id INTEGER,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     # objects
     cur.execute("""
     CREATE TABLE IF NOT EXISTS objects (
@@ -305,6 +318,7 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
+
 
 try:
     init_db()
