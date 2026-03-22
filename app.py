@@ -17,11 +17,13 @@ def get_connection():
 def ensure_column(table_name, column_name, column_type_sql):
     conn = get_connection()
     cur = conn.cursor()
+
     cur.execute("""
         SELECT column_name
         FROM information_schema.columns
         WHERE table_name=%s AND column_name=%s
     """, (table_name, column_name))
+
     exists = cur.fetchone()
 
     if not exists:
@@ -43,6 +45,7 @@ def init_tables():
         brand VARCHAR(100),
         vehicle_type VARCHAR(100),
         plate_number VARCHAR(30),
+        plate_number_normalized VARCHAR(30),
         company_name VARCHAR(150),
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -63,11 +66,11 @@ def init_tables():
         odometer INTEGER,
         entered_by VARCHAR(100),
 
-        manager_status VARCHAR(20) DEFAULT 'new',      -- new / approved / rejected
-        fueled BOOLEAN DEFAULT FALSE,                  -- выдано ли топливо
-        driver_confirmed BOOLEAN DEFAULT FALSE,        -- подтвердил ли водитель
-        dispatcher_status VARCHAR(20) DEFAULT 'new',   -- new / approved / rejected
-        closed BOOLEAN DEFAULT FALSE,                  -- закрыта ли операция
+        manager_status VARCHAR(20) DEFAULT 'new',
+        fueled BOOLEAN DEFAULT FALSE,
+        driver_confirmed BOOLEAN DEFAULT FALSE,
+        dispatcher_status VARCHAR(20) DEFAULT 'new',
+        closed BOOLEAN DEFAULT FALSE,
 
         comment TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -79,11 +82,63 @@ def init_tables():
     conn.close()
 
 
+def ensure_unique_plate_constraint():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'unique_plate_number_normalized'
+    """)
+
+    exists = cur.fetchone()
+
+    if not exists:
+        try:
+            cur.execute("""
+                ALTER TABLE vehicles
+                ADD CONSTRAINT unique_plate_number_normalized
+                UNIQUE (plate_number_normalized)
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+    cur.close()
+    conn.close()
+
+
+def fill_missing_normalized_plates():
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("""
+        SELECT id, plate_number, plate_number_normalized
+        FROM vehicles
+    """)
+    rows = cur.fetchall()
+
+    for row in rows:
+        normalized = normalize_plate(row["plate_number"])
+        if normalized and row["plate_number_normalized"] != normalized:
+            cur.execute("""
+                UPDATE vehicles
+                SET plate_number_normalized=%s
+                WHERE id=%s
+            """, (normalized, row["id"]))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 def ensure_schema():
     # vehicles
     ensure_column("vehicles", "brand", "VARCHAR(100)")
     ensure_column("vehicles", "vehicle_type", "VARCHAR(100)")
     ensure_column("vehicles", "plate_number", "VARCHAR(30)")
+    ensure_column("vehicles", "plate_number_normalized", "VARCHAR(30)")
     ensure_column("vehicles", "company_name", "VARCHAR(150)")
     ensure_column("vehicles", "is_active", "BOOLEAN DEFAULT TRUE")
 
@@ -101,10 +156,6 @@ def ensure_schema():
     ensure_column("fuel_transactions", "dispatcher_status", "VARCHAR(20) DEFAULT 'new'")
     ensure_column("fuel_transactions", "closed", "BOOLEAN DEFAULT FALSE")
     ensure_column("fuel_transactions", "comment", "TEXT")
-
-
-init_tables()
-ensure_schema()
 
 
 # ================= HELPERS =================
@@ -140,6 +191,12 @@ def execute(query, params=None):
 
 def safe(v):
     return "" if v is None else str(v)
+
+
+def normalize_plate(plate):
+    if not plate:
+        return ""
+    return "".join(ch for ch in plate.upper().strip() if ch.isalnum())
 
 
 def badge(text, cls="gray"):
@@ -374,6 +431,11 @@ def render_layout(title, content, active="dashboard"):
                 background: #475569;
                 color: white;
             }}
+            .btn-outline {{
+                background: white;
+                color: #334155;
+                border: 1px solid #cbd5e1;
+            }}
             .badge {{
                 display: inline-block;
                 padding: 6px 10px;
@@ -404,6 +466,22 @@ def render_layout(title, content, active="dashboard"):
             .badge.purple {{
                 background: #ede9fe;
                 color: #6d28d9;
+            }}
+            .alert {{
+                padding: 14px 16px;
+                border-radius: 14px;
+                margin-bottom: 16px;
+                font-size: 14px;
+            }}
+            .alert-success {{
+                background: #dcfce7;
+                color: #166534;
+                border: 1px solid #bbf7d0;
+            }}
+            .alert-danger {{
+                background: #fee2e2;
+                color: #991b1b;
+                border: 1px solid #fecaca;
             }}
             table {{
                 width: 100%;
@@ -521,6 +599,14 @@ def render_record(item, role=None):
         {actions}
     </div>
     """
+
+
+# ================= STARTUP =================
+
+init_tables()
+ensure_schema()
+fill_missing_normalized_plates()
+ensure_unique_plate_constraint()
 
 
 # ================= DASHBOARD =================
@@ -642,14 +728,14 @@ def new_entry():
 
                 try:
                     liters_value = float(liters)
-                except:
+                except Exception:
                     liters_value = 0
 
                 odometer_value = None
                 if odometer:
                     try:
                         odometer_value = int(odometer)
-                    except:
+                    except Exception:
                         odometer_value = None
 
                 if entry_type == "external":
@@ -950,31 +1036,55 @@ def journal():
 
 @app.route("/vehicles", methods=["GET", "POST"])
 def vehicles():
+    message = request.args.get("msg", "")
+    error = request.args.get("err", "")
+
     if request.method == "POST":
         brand = request.form.get("brand", "").strip()
         vehicle_type = request.form.get("vehicle_type", "").strip()
         plate = request.form.get("plate", "").strip()
         company = request.form.get("company", "").strip()
 
-        if brand and vehicle_type and plate:
-            execute("""
-                INSERT INTO vehicles (
-                    brand,
-                    vehicle_type,
-                    plate_number,
-                    company_name,
-                    is_active
-                )
-                VALUES (%s, %s, %s, %s, TRUE)
-            """, (brand, vehicle_type, plate, company))
+        normalized_plate = normalize_plate(plate)
 
-        return redirect("/vehicles")
+        if brand and vehicle_type and plate:
+            existing_vehicle = fetch_one("""
+                SELECT id, brand, vehicle_type, plate_number, company_name, is_active
+                FROM vehicles
+                WHERE plate_number_normalized=%s
+            """, (normalized_plate,))
+
+            if existing_vehicle:
+                return redirect("/vehicles?err=Транспорт с таким гос. номером уже существует")
+            else:
+                try:
+                    execute("""
+                        INSERT INTO vehicles (
+                            brand,
+                            vehicle_type,
+                            plate_number,
+                            plate_number_normalized,
+                            company_name,
+                            is_active
+                        )
+                        VALUES (%s, %s, %s, %s, %s, TRUE)
+                    """, (brand, vehicle_type, plate, normalized_plate, company))
+
+                    return redirect("/vehicles?msg=Транспорт успешно добавлен")
+                except Exception:
+                    return redirect("/vehicles?err=Не удалось добавить транспорт")
 
     rows = fetch_all("""
         SELECT *
         FROM vehicles
         ORDER BY id DESC
     """)
+
+    alerts = ""
+    if message:
+        alerts += f'<div class="alert alert-success">{safe(message)}</div>'
+    if error:
+        alerts += f'<div class="alert alert-danger">{safe(error)}</div>'
 
     table_rows = ""
     for r in rows:
@@ -1005,6 +1115,8 @@ def vehicles():
     content = f"""
     <div class="page-title">Транспорт</div>
     <div class="sub">АТС может добавлять, редактировать и отключать транспорт</div>
+
+    {alerts}
 
     <div class="card">
         <h3>Добавить транспорт</h3>
@@ -1061,7 +1173,7 @@ def edit_vehicle(vehicle_id):
     """, (vehicle_id,))
 
     if not vehicle:
-        return redirect("/vehicles")
+        return redirect("/vehicles?err=Транспорт не найден")
 
     if request.method == "POST":
         brand = request.form.get("brand", "").strip()
@@ -1070,18 +1182,47 @@ def edit_vehicle(vehicle_id):
         company = request.form.get("company", "").strip()
         is_active = request.form.get("is_active") == "true"
 
-        if brand and vehicle_type and plate:
-            execute("""
-                UPDATE vehicles
-                SET brand=%s,
-                    vehicle_type=%s,
-                    plate_number=%s,
-                    company_name=%s,
-                    is_active=%s
-                WHERE id=%s
-            """, (brand, vehicle_type, plate, company, is_active, vehicle_id))
+        normalized_plate = normalize_plate(plate)
 
-        return redirect("/vehicles")
+        if brand and vehicle_type and plate:
+            duplicate = fetch_one("""
+                SELECT id
+                FROM vehicles
+                WHERE plate_number_normalized=%s
+                  AND id<>%s
+            """, (normalized_plate, vehicle_id))
+
+            if duplicate:
+                return redirect(f"/vehicles/edit/{vehicle_id}?err=Другой транспорт с таким гос. номером уже существует")
+
+            try:
+                execute("""
+                    UPDATE vehicles
+                    SET brand=%s,
+                        vehicle_type=%s,
+                        plate_number=%s,
+                        plate_number_normalized=%s,
+                        company_name=%s,
+                        is_active=%s
+                    WHERE id=%s
+                """, (
+                    brand,
+                    vehicle_type,
+                    plate,
+                    normalized_plate,
+                    company,
+                    is_active,
+                    vehicle_id
+                ))
+
+                return redirect("/vehicles?msg=Данные транспорта обновлены")
+            except Exception:
+                return redirect(f"/vehicles/edit/{vehicle_id}?err=Не удалось сохранить изменения")
+
+    error = request.args.get("err", "")
+    alerts = ""
+    if error:
+        alerts += f'<div class="alert alert-danger">{safe(error)}</div>'
 
     checked_true = "selected" if vehicle["is_active"] else ""
     checked_false = "selected" if not vehicle["is_active"] else ""
@@ -1089,6 +1230,8 @@ def edit_vehicle(vehicle_id):
     content = f"""
     <div class="page-title">Редактирование транспорта</div>
     <div class="sub">Изменение данных транспорта</div>
+
+    {alerts}
 
     <div class="card">
         <form method="post">
