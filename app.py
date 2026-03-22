@@ -23,7 +23,7 @@ def init_tables():
         id SERIAL PRIMARY KEY,
         vehicle_name VARCHAR(100),
         plate_number VARCHAR(30),
-        object_name VARCHAR(100),
+        company_name VARCHAR(150),
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -80,9 +80,10 @@ def ensure_schema():
     ensure_column("fuel_transactions", "dispatcher_status", "VARCHAR(20) DEFAULT 'new'")
     ensure_column("fuel_transactions", "closed", "BOOLEAN DEFAULT FALSE")
     ensure_column("fuel_transactions", "comment", "TEXT")
+    ensure_column("vehicles", "company_name", "VARCHAR(150)")
 
 
-init_tables()
+()
 ensure_schema()
 
 
@@ -627,7 +628,7 @@ def new_entry():
         return redirect("/role/requester")
 
     vehicles = fetch_all("""
-        SELECT vehicle_name, plate_number, object_name
+        SELECT vehicle_name, plate_number, company_name
         FROM vehicles
         WHERE is_active=TRUE
         ORDER BY vehicle_name
@@ -637,8 +638,8 @@ def new_entry():
     for v in vehicles:
         title = safe(v["vehicle_name"])
         plate = safe(v["plate_number"])
-        obj = safe(v["object_name"])
-        label = f"{title} | {plate} | {obj}"
+        company = safe(v["company_name"])
+        label = f"{title} | {plate} | {company}"
         options += f"<option value='{title}'>{label}</option>"
 
     content = f"""
@@ -888,13 +889,13 @@ def vehicles():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         plate = request.form.get("plate", "").strip()
-        obj = request.form.get("object", "").strip()
+        company = request.form.get("company", "").strip()
 
         if name:
             execute("""
-                INSERT INTO vehicles (vehicle_name, plate_number, object_name, is_active)
+                INSERT INTO vehicles (vehicle_name, plate_number, company_name, is_active)
                 VALUES (%s, %s, %s, TRUE)
-            """, (name, plate, obj))
+            """, (name, plate, company))
 
         return redirect("/vehicles")
 
@@ -913,7 +914,7 @@ def vehicles():
             <td>{r['id']}</td>
             <td>{safe(r['vehicle_name'])}</td>
             <td>{safe(r['plate_number'])}</td>
-            <td>{safe(r['object_name'])}</td>
+            <td>{safe(r['company_name'])}</td>
             <td>{status}</td>
             <td>
                 <a href="/vehicles/edit/{r['id']}"><button class="btn-primary" type="button">Редактировать</button></a>
@@ -946,8 +947,8 @@ def vehicles():
                     <input name="plate" placeholder="Например: 01 A 123 BC">
                 </div>
                 <div>
-                    <label>Объект</label>
-                    <input name="object" placeholder="Например: Буровая 12">
+                    <label>Компания</label>
+                    <input name="company" placeholder="Например: ООО Нефтесервис">
                 </div>
             </div>
             <div style="margin-top:16px;">
@@ -963,7 +964,7 @@ def vehicles():
                 <th>ID</th>
                 <th>Наименование</th>
                 <th>Госномер</th>
-                <th>Объект</th>
+                <th>Компания</th>
                 <th>Статус</th>
                 <th>Действия</th>
             </tr>
@@ -988,7 +989,7 @@ def edit_vehicle(vehicle_id):
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         plate = request.form.get("plate", "").strip()
-        obj = request.form.get("object", "").strip()
+        company = request.form.get("company", "").strip()
         is_active = request.form.get("is_active") == "true"
 
         if name:
@@ -996,10 +997,10 @@ def edit_vehicle(vehicle_id):
                 UPDATE vehicles
                 SET vehicle_name=%s,
                     plate_number=%s,
-                    object_name=%s,
+                    company_name=%s,
                     is_active=%s
                 WHERE id=%s
-            """, (name, plate, obj, is_active, vehicle_id))
+            """, (name, plate, company, is_active, vehicle_id))
 
         return redirect("/vehicles")
 
@@ -1022,8 +1023,8 @@ def edit_vehicle(vehicle_id):
                     <input name="plate" value="{safe(vehicle['plate_number'])}">
                 </div>
                 <div>
-                    <label>Объект</label>
-                    <input name="object" value="{safe(vehicle['object_name'])}">
+                    <label>Компания</label>
+                    <input name="company" value="{safe(vehicle['company_name'])}">
                 </div>
                 <div>
                     <label>Статус</label>
