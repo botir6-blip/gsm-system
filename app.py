@@ -14,47 +14,6 @@ def get_connection():
 
 # ================= DB INIT =================
 
-def init_tables():
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS vehicles (
-        id SERIAL PRIMARY KEY,
-        vehicle_name VARCHAR(100),
-        plate_number VARCHAR(30),
-        company_name VARCHAR(150),
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS fuel_transactions (
-        id SERIAL PRIMARY KEY,
-        vehicle VARCHAR(100),
-        object_name VARCHAR(100),
-        entry_type VARCHAR(20), -- internal / external
-        liters NUMERIC,
-        odometer INTEGER,
-        entered_by VARCHAR(100),
-
-        manager_status VARCHAR(20) DEFAULT 'new',
-        fueled BOOLEAN DEFAULT FALSE,
-        driver_confirmed BOOLEAN DEFAULT FALSE,
-        dispatcher_status VARCHAR(20) DEFAULT 'new',
-        closed BOOLEAN DEFAULT FALSE,
-
-        comment TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
 def ensure_column(table_name, column_name, column_type_sql):
     conn = get_connection()
     cur = conn.cursor()
@@ -73,17 +32,78 @@ def ensure_column(table_name, column_name, column_type_sql):
     conn.close()
 
 
+def init_tables():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # ===== Транспорт =====
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS vehicles (
+        id SERIAL PRIMARY KEY,
+        brand VARCHAR(100),
+        vehicle_type VARCHAR(100),
+        plate_number VARCHAR(30),
+        company_name VARCHAR(150),
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # ===== Операции ГСМ =====
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS fuel_transactions (
+        id SERIAL PRIMARY KEY,
+
+        vehicle_id INTEGER,
+        vehicle_label VARCHAR(255),
+
+        object_name VARCHAR(100),
+        entry_type VARCHAR(20), -- internal / external
+        liters NUMERIC,
+        odometer INTEGER,
+        entered_by VARCHAR(100),
+
+        manager_status VARCHAR(20) DEFAULT 'new',      -- new / approved / rejected
+        fueled BOOLEAN DEFAULT FALSE,                  -- выдано ли топливо
+        driver_confirmed BOOLEAN DEFAULT FALSE,        -- подтвердил ли водитель
+        dispatcher_status VARCHAR(20) DEFAULT 'new',   -- new / approved / rejected
+        closed BOOLEAN DEFAULT FALSE,                  -- закрыта ли операция
+
+        comment TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 def ensure_schema():
+    # vehicles
+    ensure_column("vehicles", "brand", "VARCHAR(100)")
+    ensure_column("vehicles", "vehicle_type", "VARCHAR(100)")
+    ensure_column("vehicles", "plate_number", "VARCHAR(30)")
+    ensure_column("vehicles", "company_name", "VARCHAR(150)")
+    ensure_column("vehicles", "is_active", "BOOLEAN DEFAULT TRUE")
+
+    # fuel_transactions
+    ensure_column("fuel_transactions", "vehicle_id", "INTEGER")
+    ensure_column("fuel_transactions", "vehicle_label", "VARCHAR(255)")
+    ensure_column("fuel_transactions", "object_name", "VARCHAR(100)")
+    ensure_column("fuel_transactions", "entry_type", "VARCHAR(20)")
+    ensure_column("fuel_transactions", "liters", "NUMERIC")
+    ensure_column("fuel_transactions", "odometer", "INTEGER")
+    ensure_column("fuel_transactions", "entered_by", "VARCHAR(100)")
     ensure_column("fuel_transactions", "manager_status", "VARCHAR(20) DEFAULT 'new'")
     ensure_column("fuel_transactions", "fueled", "BOOLEAN DEFAULT FALSE")
     ensure_column("fuel_transactions", "driver_confirmed", "BOOLEAN DEFAULT FALSE")
     ensure_column("fuel_transactions", "dispatcher_status", "VARCHAR(20) DEFAULT 'new'")
     ensure_column("fuel_transactions", "closed", "BOOLEAN DEFAULT FALSE")
     ensure_column("fuel_transactions", "comment", "TEXT")
-    ensure_column("vehicles", "company_name", "VARCHAR(150)")
 
 
-()
+init_tables()
 ensure_schema()
 
 
@@ -284,7 +304,7 @@ def render_layout(title, content, active="dashboard"):
             }}
             .meta {{
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
                 gap: 10px;
                 margin: 12px 0;
             }}
@@ -421,8 +441,9 @@ def render_layout(title, content, active="dashboard"):
 
 
 def render_record(item, role=None):
-    title = f"{safe(item['vehicle'])} — {safe(item['liters'])} л"
+    title = safe(item["vehicle_label"])
     type_text = "Внутренний объект" if item["entry_type"] == "internal" else "Внешний объект"
+
     comment_html = ""
     if item["comment"]:
         comment_html = f"""
@@ -446,6 +467,7 @@ def render_record(item, role=None):
             </form>
         </div>
         """
+
     elif role == "fueler":
         actions = f"""
         <div class="actions">
@@ -454,6 +476,7 @@ def render_record(item, role=None):
             </form>
         </div>
         """
+
     elif role == "driver":
         actions = f"""
         <div class="actions">
@@ -462,6 +485,7 @@ def render_record(item, role=None):
             </form>
         </div>
         """
+
     elif role == "dispatcher":
         actions = f"""
         <div class="actions">
@@ -487,6 +511,7 @@ def render_record(item, role=None):
 
         <div class="meta">
             <div class="meta-item"><b>Объект</b>{safe(item['object_name'])}</div>
+            <div class="meta-item"><b>Литры</b>{safe(item['liters'])}</div>
             <div class="meta-item"><b>Одометр</b>{safe(item['odometer'])}</div>
             <div class="meta-item"><b>Кто внес</b>{safe(item['entered_by'])}</div>
             <div class="meta-item"><b>Дата</b>{safe(item['created_at'])}</div>
@@ -523,9 +548,16 @@ def dashboard():
             SELECT COUNT(*) AS cnt
             FROM fuel_transactions
             WHERE (
-                entry_type='external' AND dispatcher_status='new' AND closed=FALSE
+                entry_type='external'
+                AND dispatcher_status='new'
+                AND closed=FALSE
             ) OR (
-                entry_type='internal' AND manager_status='approved' AND fueled=TRUE AND driver_confirmed=TRUE AND dispatcher_status='new' AND closed=FALSE
+                entry_type='internal'
+                AND manager_status='approved'
+                AND fueled=TRUE
+                AND driver_confirmed=TRUE
+                AND dispatcher_status='new'
+                AND closed=FALSE
             )
         """)[0]["cnt"],
         "closed": fetch_all("""
@@ -551,7 +583,7 @@ def dashboard():
     <div class="grid">
         <div class="card">
             <h3>Для заявителя</h3>
-            <p>Создание новой заявки и просмотр своих записей.</p>
+            <p>Создание новой заявки и просмотр записей.</p>
             <a href="/new"><button class="btn-primary">Создать заявку</button></a>
             <a href="/role/requester"><button class="btn-gray">Открыть раздел</button></a>
         </div>
@@ -586,61 +618,92 @@ def dashboard():
 @app.route("/new", methods=["GET", "POST"])
 def new_entry():
     if request.method == "POST":
-        vehicle = request.form.get("vehicle", "").strip()
+        vehicle_id = request.form.get("vehicle_id", "").strip()
         object_name = request.form.get("object", "").strip()
         entry_type = request.form.get("entry_type", "").strip()
         liters = request.form.get("liters", "").strip()
         odometer = request.form.get("odometer", "").strip()
         entered_by = request.form.get("entered_by", "").strip()
 
-        if vehicle and entry_type and liters and entered_by:
-            try:
-                liters_value = float(liters)
-            except:
-                liters_value = 0
+        if vehicle_id and entry_type and liters and entered_by:
+            vehicle = fetch_one("""
+                SELECT *
+                FROM vehicles
+                WHERE id=%s AND is_active=TRUE
+            """, (vehicle_id,))
 
-            odometer_value = None
-            if odometer:
-                try:
-                    odometer_value = int(odometer)
-                except:
-                    odometer_value = None
-
-            if entry_type == "external":
-                manager_status = "approved"
-                fueled = True
-                driver_confirmed = True
-            else:
-                manager_status = "new"
-                fueled = False
-                driver_confirmed = False
-
-            execute("""
-                INSERT INTO fuel_transactions (
-                    vehicle, object_name, entry_type, liters, odometer, entered_by,
-                    manager_status, fueled, driver_confirmed, dispatcher_status, closed, comment
+            if vehicle:
+                vehicle_label = (
+                    f"{safe(vehicle['brand'])} | "
+                    f"{safe(vehicle['vehicle_type'])} | "
+                    f"{safe(vehicle['plate_number'])} | "
+                    f"{safe(vehicle['company_name'])}"
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'new', FALSE, NULL)
-            """, (
-                vehicle, object_name, entry_type, liters_value, odometer_value, entered_by,
-                manager_status, fueled, driver_confirmed
-            ))
+
+                try:
+                    liters_value = float(liters)
+                except:
+                    liters_value = 0
+
+                odometer_value = None
+                if odometer:
+                    try:
+                        odometer_value = int(odometer)
+                    except:
+                        odometer_value = None
+
+                if entry_type == "external":
+                    manager_status = "approved"
+                    fueled = True
+                    driver_confirmed = True
+                else:
+                    manager_status = "new"
+                    fueled = False
+                    driver_confirmed = False
+
+                execute("""
+                    INSERT INTO fuel_transactions (
+                        vehicle_id,
+                        vehicle_label,
+                        object_name,
+                        entry_type,
+                        liters,
+                        odometer,
+                        entered_by,
+                        manager_status,
+                        fueled,
+                        driver_confirmed,
+                        dispatcher_status,
+                        closed,
+                        comment
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'new', FALSE, NULL)
+                """, (
+                    vehicle["id"],
+                    vehicle_label,
+                    object_name,
+                    entry_type,
+                    liters_value,
+                    odometer_value,
+                    entered_by,
+                    manager_status,
+                    fueled,
+                    driver_confirmed
+                ))
+
         return redirect("/role/requester")
 
     vehicles = fetch_all("""
-        SELECT vehicle_name, plate_number, company_name
+        SELECT id, brand, vehicle_type, plate_number, company_name
         FROM vehicles
         WHERE is_active=TRUE
-        ORDER BY vehicle_name
+        ORDER BY brand, plate_number
     """)
 
     options = "<option value=''>Выберите транспорт</option>"
     for v in vehicles:
-        title = safe(v["vehicle_name"])
-        plate = safe(v["plate_number"])
-        company = safe(v["company_name"])
-        label = f"{title} | {plate} | {company}"
-        options += f"<option value='{title}'>{label}</option>"
+        label = f"{safe(v['brand'])} | {safe(v['vehicle_type'])} | {safe(v['plate_number'])} | {safe(v['company_name'])}"
+        options += f"<option value='{v['id']}'>{label}</option>"
 
     content = f"""
     <div class="page-title">Новая запись</div>
@@ -651,11 +714,11 @@ def new_entry():
             <div class="form-grid">
                 <div>
                     <label>Транспорт</label>
-                    <select name="vehicle" required>{options}</select>
+                    <select name="vehicle_id" required>{options}</select>
                 </div>
                 <div>
                     <label>Объект</label>
-                    <input name="object" placeholder="Введите объект">
+                    <input name="object" placeholder="Например: Буровая 12">
                 </div>
                 <div>
                     <label>Тип операции</label>
@@ -698,7 +761,7 @@ def role_requester():
     if q:
         query += """
         WHERE entered_by ILIKE %s
-           OR vehicle ILIKE %s
+           OR vehicle_label ILIKE %s
            OR object_name ILIKE %s
         """
         like = f"%{q}%"
@@ -738,7 +801,8 @@ def role_manager():
     items = fetch_all("""
         SELECT *
         FROM fuel_transactions
-        WHERE entry_type='internal' AND manager_status='new'
+        WHERE entry_type='internal'
+          AND manager_status='new'
         ORDER BY id DESC
     """)
     records = "".join(render_record(item, role="manager") for item in items) if items else '<div class="empty">Нет заявок на согласование</div>'
@@ -818,7 +882,7 @@ def role_dispatcher():
 
     content = f"""
     <div class="page-title">Раздел АТС</div>
-    <div class="sub">Финальная проверка и закрытие операций. Также АТС может управлять транспортом.</div>
+    <div class="sub">Финальная проверка и закрытие операций. Также АТС управляет транспортом.</div>
 
     <div style="margin-bottom:16px;">
         <a href="/vehicles"><button class="btn-gray">Перейти в раздел транспорта</button></a>
@@ -844,7 +908,7 @@ def journal():
         rows += f"""
         <tr>
             <td>{item['id']}</td>
-            <td>{safe(item['vehicle'])}</td>
+            <td>{safe(item['vehicle_label'])}</td>
             <td>{safe(item['object_name'])}</td>
             <td>{"Внутренний" if item['entry_type'] == 'internal' else "Внешний"}</td>
             <td>{safe(item['liters'])}</td>
@@ -887,15 +951,22 @@ def journal():
 @app.route("/vehicles", methods=["GET", "POST"])
 def vehicles():
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
+        brand = request.form.get("brand", "").strip()
+        vehicle_type = request.form.get("vehicle_type", "").strip()
         plate = request.form.get("plate", "").strip()
         company = request.form.get("company", "").strip()
 
-        if name:
+        if brand and vehicle_type and plate:
             execute("""
-                INSERT INTO vehicles (vehicle_name, plate_number, company_name, is_active)
-                VALUES (%s, %s, %s, TRUE)
-            """, (name, plate, company))
+                INSERT INTO vehicles (
+                    brand,
+                    vehicle_type,
+                    plate_number,
+                    company_name,
+                    is_active
+                )
+                VALUES (%s, %s, %s, %s, TRUE)
+            """, (brand, vehicle_type, plate, company))
 
         return redirect("/vehicles")
 
@@ -912,7 +983,8 @@ def vehicles():
         table_rows += f"""
         <tr>
             <td>{r['id']}</td>
-            <td>{safe(r['vehicle_name'])}</td>
+            <td>{safe(r['brand'])}</td>
+            <td>{safe(r['vehicle_type'])}</td>
             <td>{safe(r['plate_number'])}</td>
             <td>{safe(r['company_name'])}</td>
             <td>{status}</td>
@@ -928,7 +1000,7 @@ def vehicles():
         """
 
     if not table_rows:
-        table_rows = '<tr><td colspan="6">Транспорт пока не добавлен</td></tr>'
+        table_rows = '<tr><td colspan="7">Транспорт пока не добавлен</td></tr>'
 
     content = f"""
     <div class="page-title">Транспорт</div>
@@ -939,12 +1011,16 @@ def vehicles():
         <form method="post">
             <div class="form-grid">
                 <div>
-                    <label>Наименование</label>
-                    <input name="name" placeholder="Например: КамАЗ 6520" required>
+                    <label>Марка автомобиля</label>
+                    <input name="brand" placeholder="Например: КамАЗ" required>
                 </div>
                 <div>
-                    <label>Госномер</label>
-                    <input name="plate" placeholder="Например: 01 A 123 BC">
+                    <label>Тип автомобиля</label>
+                    <input name="vehicle_type" placeholder="Например: Бензовоз" required>
+                </div>
+                <div>
+                    <label>Гос. номер</label>
+                    <input name="plate" placeholder="Например: 01 A 123 BC" required>
                 </div>
                 <div>
                     <label>Компания</label>
@@ -962,8 +1038,9 @@ def vehicles():
         <table>
             <tr>
                 <th>ID</th>
-                <th>Наименование</th>
-                <th>Госномер</th>
+                <th>Марка</th>
+                <th>Тип</th>
+                <th>Гос. номер</th>
                 <th>Компания</th>
                 <th>Статус</th>
                 <th>Действия</th>
@@ -987,20 +1064,22 @@ def edit_vehicle(vehicle_id):
         return redirect("/vehicles")
 
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
+        brand = request.form.get("brand", "").strip()
+        vehicle_type = request.form.get("vehicle_type", "").strip()
         plate = request.form.get("plate", "").strip()
         company = request.form.get("company", "").strip()
         is_active = request.form.get("is_active") == "true"
 
-        if name:
+        if brand and vehicle_type and plate:
             execute("""
                 UPDATE vehicles
-                SET vehicle_name=%s,
+                SET brand=%s,
+                    vehicle_type=%s,
                     plate_number=%s,
                     company_name=%s,
                     is_active=%s
                 WHERE id=%s
-            """, (name, plate, company, is_active, vehicle_id))
+            """, (brand, vehicle_type, plate, company, is_active, vehicle_id))
 
         return redirect("/vehicles")
 
@@ -1009,18 +1088,22 @@ def edit_vehicle(vehicle_id):
 
     content = f"""
     <div class="page-title">Редактирование транспорта</div>
-    <div class="sub">Здесь можно изменить название, госномер, объект и статус транспорта</div>
+    <div class="sub">Изменение данных транспорта</div>
 
     <div class="card">
         <form method="post">
             <div class="form-grid">
                 <div>
-                    <label>Наименование</label>
-                    <input name="name" value="{safe(vehicle['vehicle_name'])}" required>
+                    <label>Марка автомобиля</label>
+                    <input name="brand" value="{safe(vehicle['brand'])}" required>
                 </div>
                 <div>
-                    <label>Госномер</label>
-                    <input name="plate" value="{safe(vehicle['plate_number'])}">
+                    <label>Тип автомобиля</label>
+                    <input name="vehicle_type" value="{safe(vehicle['vehicle_type'])}" required>
+                </div>
+                <div>
+                    <label>Гос. номер</label>
+                    <input name="plate" value="{safe(vehicle['plate_number'])}" required>
                 </div>
                 <div>
                     <label>Компания</label>
