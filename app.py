@@ -8,6 +8,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+
 # =========================
 # DATABASE
 # =========================
@@ -16,22 +17,34 @@ def get_connection():
 
 
 def normalize_plate(plate: str) -> str:
-    """
-    Гос.номерни нормализация қилади:
-    - пробелларни олиб ташлайди
-    - тире/нуқта/бошқа белгиларни олиб ташлайди
-    - катта ҳарфга ўтказади
-    """
     if not plate:
         return ""
-    cleaned = "".join(ch for ch in plate.upper() if ch.isalnum())
-    return cleaned
+    return "".join(ch for ch in plate.upper() if ch.isalnum())
+
+
+def column_exists(cur, table_name, column_name):
+    cur.execute("""
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = %s AND column_name = %s
+    """, (table_name, column_name))
+    return cur.fetchone() is not None
+
+
+def index_exists(cur, index_name):
+    cur.execute("""
+        SELECT 1
+        FROM pg_indexes
+        WHERE indexname = %s
+    """, (index_name,))
+    return cur.fetchone() is not None
+
 
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
 
-    # Компаниyалар
+    # companies
     cur.execute("""
     CREATE TABLE IF NOT EXISTS companies (
         id SERIAL PRIMARY KEY,
@@ -40,31 +53,30 @@ def init_db():
     )
     """)
 
-    # Объектлар
+    # objects
     cur.execute("""
     CREATE TABLE IF NOT EXISTS objects (
         id SERIAL PRIMARY KEY,
         name VARCHAR(150) NOT NULL,
         company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(name, company_id)
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    # Транспортлар
+    # vehicles
     cur.execute("""
     CREATE TABLE IF NOT EXISTS vehicles (
         id SERIAL PRIMARY KEY,
         brand VARCHAR(100) NOT NULL,
         vehicle_type VARCHAR(100) NOT NULL,
         plate_number VARCHAR(50) NOT NULL,
-        plate_number_normalized VARCHAR(50) NOT NULL UNIQUE,
+        plate_number_normalized VARCHAR(50),
         company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    # ГСМ операциялари
+    # fuel_transactions
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fuel_transactions (
         id SERIAL PRIMARY KEY,
@@ -80,52 +92,79 @@ def init_db():
     """)
 
     # ===== MIGRATIONS =====
-
-    # vehicles.company_id
-    cur.execute("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name='vehicles' AND column_name='company_id';
-    """)
-    if not cur.fetchone():
-        cur.execute("""
-            ALTER TABLE vehicles
-            ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL;
-        """)
-
-    # vehicles.plate_number_normalized
-    cur.execute("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name='vehicles' AND column_name='plate_number_normalized';
-    """)
-    if not cur.fetchone():
-        cur.execute("""
-            ALTER TABLE vehicles
-            ADD COLUMN plate_number_normalized VARCHAR(50);
-        """)
-
-        cur.execute("""
-            UPDATE vehicles
-            SET plate_number_normalized = UPPER(REGEXP_REPLACE(plate_number, '[^A-Za-z0-9]', '', 'g'))
-            WHERE plate_number_normalized IS NULL;
-        """)
-
-    # objects.company_id
-    cur.execute("""
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name='objects' AND column_name='company_id';
-    """)
-    if not cur.fetchone():
+    if not column_exists(cur, "objects", "company_id"):
         cur.execute("""
             ALTER TABLE objects
-            ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
+            ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE
         """)
+
+    if not column_exists(cur, "vehicles", "company_id"):
+        cur.execute("""
+            ALTER TABLE vehicles
+            ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL
+        """)
+
+    if not column_exists(cur, "vehicles", "plate_number_normalized"):
+        cur.execute("""
+            ALTER TABLE vehicles
+            ADD COLUMN plate_number_normalized VARCHAR(50)
+        """)
+
+    # fill normalized plates if empty
+    cur.execute("SELECT id, plate_number FROM vehicles WHERE plate_number_normalized IS NULL OR plate_number_normalized = ''")
+    for row in cur.fetchall():
+        vehicle_id, plate_number = row
+        cur.execute("""
+            UPDATE vehicles
+            SET plate_number_normalized = %s
+            WHERE id = %s
+        """, (normalize_plate(plate_number), vehicle_id))
+
+    # unique index on normalized plate
+    if not index_exists(cur, "idx_vehicles_plate_number_normalized_unique"):
+        cur.execute("""
+            SELECT plate_number_normalized, COUNT(*)
+            FROM vehicles
+            WHERE plate_number_normalized IS NOT NULL
+            GROUP BY plate_number_normalized
+            HAVING COUNT(*) > 1
+        """)
+        duplicates = cur.fetchall()
+
+        # if duplicates exist, skip unique index creation to avoid crash
+        if not duplicates:
+            cur.execute("""
+                CREATE UNIQUE INDEX idx_vehicles_plate_number_normalized_unique
+                ON vehicles (plate_number_normalized)
+            """)
+
+    # unique constraint for objects(name, company_id) if missing
+    cur.execute("""
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'objects_name_company_unique'
+    """)
+    if not cur.fetchone():
+        cur.execute("""
+            SELECT name, company_id, COUNT(*)
+            FROM objects
+            GROUP BY name, company_id
+            HAVING COUNT(*) > 1
+        """)
+        duplicates = cur.fetchall()
+        if not duplicates:
+            cur.execute("""
+                ALTER TABLE objects
+                ADD CONSTRAINT objects_name_company_unique UNIQUE (name, company_id)
+            """)
 
     conn.commit()
     cur.close()
     conn.close()
+
+
+# IMPORTANT: call after function definition
+init_db()
 
 
 # =========================
@@ -160,12 +199,16 @@ def execute_query(query, params=None):
     conn.close()
 
 
+def render_page(title, content):
+    return render_template_string(BASE_HTML, title=title, content=content)
+
+
 # =========================
-# HTML TEMPLATE
+# HTML
 # =========================
 BASE_HTML = """
 <!DOCTYPE html>
-<html lang="uz">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <title>{{ title }}</title>
@@ -177,7 +220,7 @@ BASE_HTML = """
             padding: 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1250px;
             margin: auto;
             background: white;
             padding: 20px;
@@ -234,6 +277,7 @@ BASE_HTML = """
             border: 1px solid #e5e7eb;
             padding: 10px;
             text-align: left;
+            vertical-align: top;
         }
         th {
             background: #f3f4f6;
@@ -262,21 +306,41 @@ BASE_HTML = """
             padding: 16px;
             border-radius: 12px;
         }
-        @media (max-width: 768px) {
-            .two-col {
-                grid-template-columns: 1fr;
-            }
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
         }
-        .small-btn {
+        .btn-edit, .btn-delete, .btn-back {
             padding: 6px 10px;
-            background: #dc2626;
             color: white;
             border-radius: 8px;
             text-decoration: none;
             font-size: 13px;
+            display: inline-block;
         }
-        .small-btn:hover {
+        .btn-edit {
+            background: #f59e0b;
+        }
+        .btn-edit:hover {
+            background: #d97706;
+        }
+        .btn-delete {
+            background: #dc2626;
+        }
+        .btn-delete:hover {
             background: #b91c1c;
+        }
+        .btn-back {
+            background: #6b7280;
+        }
+        .btn-back:hover {
+            background: #4b5563;
+        }
+        @media (max-width: 768px) {
+            .two-col {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -285,12 +349,12 @@ BASE_HTML = """
     <h1>{{ title }}</h1>
 
     <div class="menu">
-        <a href="{{ url_for('index') }}">Бош саҳифа</a>
-        <a href="{{ url_for('companies_page') }}">Компаниялар</a>
-        <a href="{{ url_for('objects_page') }}">Объектлар</a>
-        <a href="{{ url_for('vehicles_page') }}">Транспортлар</a>
-        <a href="{{ url_for('fuel_page') }}">ГСМ киритиш</a>
-        <a href="{{ url_for('transactions_page') }}">ГСМ журнали</a>
+        <a href="{{ url_for('index') }}">Главная</a>
+        <a href="{{ url_for('companies_page') }}">Компании</a>
+        <a href="{{ url_for('objects_page') }}">Объекты</a>
+        <a href="{{ url_for('vehicles_page') }}">Транспорт</a>
+        <a href="{{ url_for('fuel_page') }}">Ввод ГСМ</a>
+        <a href="{{ url_for('transactions_page') }}">Журнал ГСМ</a>
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -308,12 +372,8 @@ BASE_HTML = """
 """
 
 
-def render_page(title, content):
-    return render_template_string(BASE_HTML, title=title, content=content)
-
-
 # =========================
-# ROUTES
+# HOME
 # =========================
 @app.route("/")
 def index():
@@ -325,24 +385,24 @@ def index():
     content = f"""
     <div class="two-col">
         <div class="card">
-            <h3>Қисқача маълумот</h3>
-            <p><b>Компаниялар:</b> {company_count}</p>
-            <p><b>Объектлар:</b> {object_count}</p>
-            <p><b>Транспортлар:</b> {vehicle_count}</p>
-            <p><b>ГСМ операциялари:</b> {tx_count}</p>
+            <h3>Краткая информация</h3>
+            <p><b>Компании:</b> {company_count}</p>
+            <p><b>Объекты:</b> {object_count}</p>
+            <p><b>Транспорт:</b> {vehicle_count}</p>
+            <p><b>Операции ГСМ:</b> {tx_count}</p>
         </div>
         <div class="card">
-            <h3>Тизим имкониятлари</h3>
-            <p>• Компания базаси</p>
-            <p>• Объект базаси</p>
-            <p>• Транспорт базаси</p>
-            <p>• ГСМ кирим-чиқим журнали</p>
-            <p>• Спидометр ҳисобини сақлаш</p>
-            <p>• Дубликат гос.номердан ҳимоя</p>
+            <h3>Возможности системы</h3>
+            <p>• База компаний</p>
+            <p>• База объектов</p>
+            <p>• База транспорта</p>
+            <p>• Журнал прихода и расхода ГСМ</p>
+            <p>• Учет спидометра</p>
+            <p>• Защита от дубликата госномера</p>
         </div>
     </div>
     """
-    return render_page("ГСМ Назорат Тизими", content)
+    return render_page("Система контроля ГСМ", content)
 
 
 # =========================
@@ -354,16 +414,19 @@ def companies_page():
         name = request.form.get("name", "").strip()
 
         if not name:
-            flash("Компания номини киритинг.", "error")
+            flash("Введите название компании.", "error")
             return redirect(url_for("companies_page"))
 
-        existing = fetch_one("SELECT * FROM companies WHERE LOWER(name)=LOWER(%s)", (name,))
+        existing = fetch_one(
+            "SELECT * FROM companies WHERE LOWER(name)=LOWER(%s)",
+            (name,)
+        )
         if existing:
-            flash("Бу компания аллақачон мавжуд.", "error")
+            flash("Такая компания уже существует.", "error")
             return redirect(url_for("companies_page"))
 
         execute_query("INSERT INTO companies (name) VALUES (%s)", (name,))
-        flash("Компания қўшилди.", "success")
+        flash("Компания добавлена.", "success")
         return redirect(url_for("companies_page"))
 
     companies = fetch_all("SELECT * FROM companies ORDER BY id DESC")
@@ -375,39 +438,84 @@ def companies_page():
             <td>{c['id']}</td>
             <td>{c['name']}</td>
             <td>
-                <a class="small-btn" href="/companies/delete/{c['id']}" onclick="return confirm('Ростдан ҳам ўчирмоқчимисиз?')">Ўчириш</a>
+                <div class="actions">
+                    <a class="btn-edit" href="/companies/edit/{c['id']}">Редактировать</a>
+                    <a class="btn-delete" href="/companies/delete/{c['id']}" onclick="return confirm('Удалить эту компанию?')">Удалить</a>
+                </div>
             </td>
         </tr>
         """
 
     content = f"""
     <div class="card">
-        <h3>Янги компания қўшиш</h3>
+        <h3>Добавить новую компанию</h3>
         <form method="POST">
-            <input type="text" name="name" placeholder="Компания номи" required>
-            <button type="submit">Сақлаш</button>
+            <input type="text" name="name" placeholder="Название компании" required>
+            <button type="submit">Сохранить</button>
         </form>
     </div>
 
     <div class="card">
-        <h3>Компаниялар рўйхати</h3>
+        <h3>Список компаний</h3>
         <table>
             <tr>
                 <th>ID</th>
-                <th>Номи</th>
-                <th>Амал</th>
+                <th>Название</th>
+                <th>Действие</th>
             </tr>
             {rows}
         </table>
     </div>
     """
-    return render_page("Компаниялар", content)
+    return render_page("Компании", content)
+
+
+@app.route("/companies/edit/<int:company_id>", methods=["GET", "POST"])
+def edit_company(company_id):
+    company = fetch_one("SELECT * FROM companies WHERE id=%s", (company_id,))
+    if not company:
+        flash("Компания не найдена.", "error")
+        return redirect(url_for("companies_page"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+
+        if not name:
+            flash("Введите название компании.", "error")
+            return redirect(url_for("edit_company", company_id=company_id))
+
+        existing = fetch_one(
+            "SELECT * FROM companies WHERE LOWER(name)=LOWER(%s) AND id<>%s",
+            (name, company_id)
+        )
+        if existing:
+            flash("Другая компания с таким названием уже существует.", "error")
+            return redirect(url_for("edit_company", company_id=company_id))
+
+        execute_query(
+            "UPDATE companies SET name=%s WHERE id=%s",
+            (name, company_id)
+        )
+        flash("Компания обновлена.", "success")
+        return redirect(url_for("companies_page"))
+
+    content = f"""
+    <div class="card">
+        <h3>Редактировать компанию</h3>
+        <form method="POST">
+            <input type="text" name="name" value="{company['name']}" required>
+            <button type="submit">Сохранить изменения</button>
+        </form>
+        <a class="btn-back" href="{url_for('companies_page')}">Назад</a>
+    </div>
+    """
+    return render_page("Редактирование компании", content)
 
 
 @app.route("/companies/delete/<int:company_id>")
 def delete_company(company_id):
     execute_query("DELETE FROM companies WHERE id=%s", (company_id,))
-    flash("Компания ўчирилди.", "success")
+    flash("Компания удалена.", "success")
     return redirect(url_for("companies_page"))
 
 
@@ -421,22 +529,23 @@ def objects_page():
         company_id = request.form.get("company_id")
 
         if not name or not company_id:
-            flash("Объект номи ва компанияни танланг.", "error")
+            flash("Введите название объекта и выберите компанию.", "error")
             return redirect(url_for("objects_page"))
 
-        existing = fetch_one(
-            "SELECT * FROM objects WHERE LOWER(name)=LOWER(%s) AND company_id=%s",
-            (name, company_id)
-        )
+        existing = fetch_one("""
+            SELECT * FROM objects
+            WHERE LOWER(name)=LOWER(%s) AND company_id=%s
+        """, (name, company_id))
+
         if existing:
-            flash("Бу объект ушбу компания учун аллақачон бор.", "error")
+            flash("Такой объект уже существует у этой компании.", "error")
             return redirect(url_for("objects_page"))
 
         execute_query(
             "INSERT INTO objects (name, company_id) VALUES (%s, %s)",
             (name, company_id)
         )
-        flash("Объект қўшилди.", "success")
+        flash("Объект добавлен.", "success")
         return redirect(url_for("objects_page"))
 
     companies = fetch_all("SELECT * FROM companies ORDER BY name")
@@ -459,44 +568,104 @@ def objects_page():
             <td>{o['name']}</td>
             <td>{o['company_name'] or ''}</td>
             <td>
-                <a class="small-btn" href="/objects/delete/{o['id']}" onclick="return confirm('Ростдан ҳам ўчирмоқчимисиз?')">Ўчириш</a>
+                <div class="actions">
+                    <a class="btn-edit" href="/objects/edit/{o['id']}">Редактировать</a>
+                    <a class="btn-delete" href="/objects/delete/{o['id']}" onclick="return confirm('Удалить этот объект?')">Удалить</a>
+                </div>
             </td>
         </tr>
         """
 
     content = f"""
     <div class="card">
-        <h3>Янги объект қўшиш</h3>
+        <h3>Добавить новый объект</h3>
         <form method="POST">
-            <input type="text" name="name" placeholder="Объект номи" required>
+            <input type="text" name="name" placeholder="Название объекта" required>
             <select name="company_id" required>
-                <option value="">Компанияни танланг</option>
+                <option value="">Выберите компанию</option>
                 {company_options}
             </select>
-            <button type="submit">Сақлаш</button>
+            <button type="submit">Сохранить</button>
         </form>
     </div>
 
     <div class="card">
-        <h3>Объектлар рўйхати</h3>
+        <h3>Список объектов</h3>
         <table>
             <tr>
                 <th>ID</th>
                 <th>Объект</th>
                 <th>Компания</th>
-                <th>Амал</th>
+                <th>Действие</th>
             </tr>
             {rows}
         </table>
     </div>
     """
-    return render_page("Объектлар", content)
+    return render_page("Объекты", content)
+
+
+@app.route("/objects/edit/<int:object_id>", methods=["GET", "POST"])
+def edit_object(object_id):
+    obj = fetch_one("SELECT * FROM objects WHERE id=%s", (object_id,))
+    if not obj:
+        flash("Объект не найден.", "error")
+        return redirect(url_for("objects_page"))
+
+    companies = fetch_all("SELECT * FROM companies ORDER BY name")
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        company_id = request.form.get("company_id")
+
+        if not name or not company_id:
+            flash("Введите название объекта и выберите компанию.", "error")
+            return redirect(url_for("edit_object", object_id=object_id))
+
+        existing = fetch_one("""
+            SELECT * FROM objects
+            WHERE LOWER(name)=LOWER(%s) AND company_id=%s AND id<>%s
+        """, (name, company_id, object_id))
+
+        if existing:
+            flash("Такой объект уже существует у этой компании.", "error")
+            return redirect(url_for("edit_object", object_id=object_id))
+
+        execute_query("""
+            UPDATE objects
+            SET name=%s, company_id=%s
+            WHERE id=%s
+        """, (name, company_id, object_id))
+
+        flash("Объект обновлен.", "success")
+        return redirect(url_for("objects_page"))
+
+    company_options = "".join([
+        f"<option value='{c['id']}' {'selected' if c['id'] == obj['company_id'] else ''}>{c['name']}</option>"
+        for c in companies
+    ])
+
+    content = f"""
+    <div class="card">
+        <h3>Редактировать объект</h3>
+        <form method="POST">
+            <input type="text" name="name" value="{obj['name']}" required>
+            <select name="company_id" required>
+                <option value="">Выберите компанию</option>
+                {company_options}
+            </select>
+            <button type="submit">Сохранить изменения</button>
+        </form>
+        <a class="btn-back" href="{url_for('objects_page')}">Назад</a>
+    </div>
+    """
+    return render_page("Редактирование объекта", content)
 
 
 @app.route("/objects/delete/<int:object_id>")
 def delete_object(object_id):
     execute_query("DELETE FROM objects WHERE id=%s", (object_id,))
-    flash("Объект ўчирилди.", "success")
+    flash("Объект удален.", "success")
     return redirect(url_for("objects_page"))
 
 
@@ -512,17 +681,17 @@ def vehicles_page():
         company_id = request.form.get("company_id")
 
         if not brand or not vehicle_type or not plate_number or not company_id:
-            flash("Барча майдонларни тўлдиринг.", "error")
+            flash("Заполните все поля.", "error")
             return redirect(url_for("vehicles_page"))
 
         normalized = normalize_plate(plate_number)
 
-        existing = fetch_one(
-            "SELECT * FROM vehicles WHERE plate_number_normalized=%s",
-            (normalized,)
-        )
+        existing = fetch_one("""
+            SELECT * FROM vehicles
+            WHERE plate_number_normalized=%s
+        """, (normalized,))
         if existing:
-            flash("Бу транспорт аллақачон қўшилган. Гос.номер дубликат.", "error")
+            flash("Такой транспорт уже существует. Дубликат госномера.", "error")
             return redirect(url_for("vehicles_page"))
 
         execute_query("""
@@ -530,7 +699,7 @@ def vehicles_page():
             VALUES (%s, %s, %s, %s, %s)
         """, (brand, vehicle_type, plate_number, normalized, company_id))
 
-        flash("Транспорт қўшилди.", "success")
+        flash("Транспорт добавлен.", "success")
         return redirect(url_for("vehicles_page"))
 
     companies = fetch_all("SELECT * FROM companies ORDER BY name")
@@ -555,48 +724,118 @@ def vehicles_page():
             <td>{v['plate_number']}</td>
             <td>{v['company_name'] or ''}</td>
             <td>
-                <a class="small-btn" href="/vehicles/delete/{v['id']}" onclick="return confirm('Ростдан ҳам ўчирмоқчимисиз?')">Ўчириш</a>
+                <div class="actions">
+                    <a class="btn-edit" href="/vehicles/edit/{v['id']}">Редактировать</a>
+                    <a class="btn-delete" href="/vehicles/delete/{v['id']}" onclick="return confirm('Удалить этот транспорт?')">Удалить</a>
+                </div>
             </td>
         </tr>
         """
 
     content = f"""
     <div class="card">
-        <h3>Янги транспорт қўшиш</h3>
+        <h3>Добавить новый транспорт</h3>
         <form method="POST">
             <input type="text" name="brand" placeholder="Марка автомобиля" required>
             <input type="text" name="vehicle_type" placeholder="Тип автомобиля" required>
-            <input type="text" name="plate_number" placeholder="Гос.номер" required>
+            <input type="text" name="plate_number" placeholder="Гос. номер" required>
             <select name="company_id" required>
-                <option value="">Компанияни танланг</option>
+                <option value="">Выберите компанию</option>
                 {company_options}
             </select>
-            <button type="submit">Сақлаш</button>
+            <button type="submit">Сохранить</button>
         </form>
     </div>
 
     <div class="card">
-        <h3>Транспортлар рўйхати</h3>
+        <h3>Список транспорта</h3>
         <table>
             <tr>
                 <th>ID</th>
                 <th>Марка</th>
                 <th>Тип</th>
-                <th>Гос.номер</th>
+                <th>Гос. номер</th>
                 <th>Компания</th>
-                <th>Амал</th>
+                <th>Действие</th>
             </tr>
             {rows}
         </table>
     </div>
     """
-    return render_page("Транспортлар", content)
+    return render_page("Транспорт", content)
+
+
+@app.route("/vehicles/edit/<int:vehicle_id>", methods=["GET", "POST"])
+def edit_vehicle(vehicle_id):
+    vehicle = fetch_one("SELECT * FROM vehicles WHERE id=%s", (vehicle_id,))
+    if not vehicle:
+        flash("Транспорт не найден.", "error")
+        return redirect(url_for("vehicles_page"))
+
+    companies = fetch_all("SELECT * FROM companies ORDER BY name")
+
+    if request.method == "POST":
+        brand = request.form.get("brand", "").strip()
+        vehicle_type = request.form.get("vehicle_type", "").strip()
+        plate_number = request.form.get("plate_number", "").strip()
+        company_id = request.form.get("company_id")
+
+        if not brand or not vehicle_type or not plate_number or not company_id:
+            flash("Заполните все поля.", "error")
+            return redirect(url_for("edit_vehicle", vehicle_id=vehicle_id))
+
+        normalized = normalize_plate(plate_number)
+
+        existing = fetch_one("""
+            SELECT * FROM vehicles
+            WHERE plate_number_normalized=%s AND id<>%s
+        """, (normalized, vehicle_id))
+
+        if existing:
+            flash("Другой транспорт с таким госномером уже существует.", "error")
+            return redirect(url_for("edit_vehicle", vehicle_id=vehicle_id))
+
+        execute_query("""
+            UPDATE vehicles
+            SET brand=%s,
+                vehicle_type=%s,
+                plate_number=%s,
+                plate_number_normalized=%s,
+                company_id=%s
+            WHERE id=%s
+        """, (brand, vehicle_type, plate_number, normalized, company_id, vehicle_id))
+
+        flash("Транспорт обновлен.", "success")
+        return redirect(url_for("vehicles_page"))
+
+    company_options = "".join([
+        f"<option value='{c['id']}' {'selected' if c['id'] == vehicle['company_id'] else ''}>{c['name']}</option>"
+        for c in companies
+    ])
+
+    content = f"""
+    <div class="card">
+        <h3>Редактировать транспорт</h3>
+        <form method="POST">
+            <input type="text" name="brand" value="{vehicle['brand']}" required>
+            <input type="text" name="vehicle_type" value="{vehicle['vehicle_type']}" required>
+            <input type="text" name="plate_number" value="{vehicle['plate_number']}" required>
+            <select name="company_id" required>
+                <option value="">Выберите компанию</option>
+                {company_options}
+            </select>
+            <button type="submit">Сохранить изменения</button>
+        </form>
+        <a class="btn-back" href="{url_for('vehicles_page')}">Назад</a>
+    </div>
+    """
+    return render_page("Редактирование транспорта", content)
 
 
 @app.route("/vehicles/delete/<int:vehicle_id>")
 def delete_vehicle(vehicle_id):
     execute_query("DELETE FROM vehicles WHERE id=%s", (vehicle_id,))
-    flash("Транспорт ўчирилди.", "success")
+    flash("Транспорт удален.", "success")
     return redirect(url_for("vehicles_page"))
 
 
@@ -615,24 +854,24 @@ def fuel_page():
         comment = request.form.get("comment", "").strip()
 
         if not vehicle_id or not object_id or not entry_type or not liters:
-            flash("Мажбурий майдонларни тўлдиринг.", "error")
+            flash("Заполните обязательные поля.", "error")
             return redirect(url_for("fuel_page"))
 
         try:
             liters_value = float(liters)
             if liters_value <= 0:
-                flash("Литр 0 дан катта бўлиши керак.", "error")
+                flash("Количество литров должно быть больше нуля.", "error")
                 return redirect(url_for("fuel_page"))
-        except:
-            flash("Литр нотўғри киритилди.", "error")
+        except ValueError:
+            flash("Неверно указано количество литров.", "error")
             return redirect(url_for("fuel_page"))
 
         speedometer_value = None
         if speedometer:
             try:
                 speedometer_value = int(speedometer)
-            except:
-                flash("Спидометр қиймати бутун сон бўлиши керак.", "error")
+            except ValueError:
+                flash("Показание спидометра должно быть целым числом.", "error")
                 return redirect(url_for("fuel_page"))
 
         execute_query("""
@@ -644,7 +883,7 @@ def fuel_page():
             vehicle_id, object_id, entry_type, liters_value, speedometer_value, entered_by, comment
         ))
 
-        flash("ГСМ операцияси сақланди.", "success")
+        flash("Операция ГСМ сохранена.", "success")
         return redirect(url_for("fuel_page"))
 
     vehicles = fetch_all("""
@@ -673,33 +912,33 @@ def fuel_page():
 
     content = f"""
     <div class="card">
-        <h3>ГСМ киритиш</h3>
+        <h3>Ввод ГСМ</h3>
         <form method="POST">
             <select name="object_id" required>
-                <option value="">Объектни танланг</option>
+                <option value="">Выберите объект</option>
                 {object_options}
             </select>
 
             <select name="vehicle_id" required>
-                <option value="">Транспортни танланг</option>
+                <option value="">Выберите транспорт</option>
                 {vehicle_options}
             </select>
 
             <select name="entry_type" required>
-                <option value="">Турини танланг</option>
-                <option value="kirim">Кирим</option>
-                <option value="chiqim">Чиқим</option>
+                <option value="">Выберите тип операции</option>
+                <option value="kirim">Приход</option>
+                <option value="chiqim">Расход</option>
             </select>
 
-            <input type="number" step="0.01" name="liters" placeholder="Литр" required>
+            <input type="number" step="0.01" name="liters" placeholder="Количество литров" required>
             <input type="number" name="speedometer" placeholder="Спидометр">
-            <input type="text" name="entered_by" placeholder="Ким киритди">
-            <textarea name="comment" placeholder="Изоҳ"></textarea>
-            <button type="submit">Сақлаш</button>
+            <input type="text" name="entered_by" placeholder="Кто ввел">
+            <textarea name="comment" placeholder="Комментарий"></textarea>
+            <button type="submit">Сохранить</button>
         </form>
     </div>
     """
-    return render_page("ГСМ киритиш", content)
+    return render_page("Ввод ГСМ", content)
 
 
 # =========================
@@ -730,53 +969,54 @@ def transactions_page():
 
     rows = ""
     for t in transactions:
+        entry_type_ru = "Приход" if t["entry_type"] == "kirim" else "Расход"
+
         rows += f"""
         <tr>
             <td>{t['id']}</td>
             <td>{t['object_name'] or ''}</td>
             <td>{t['company_name'] or ''}</td>
             <td>{(t['brand'] or '')} / {(t['vehicle_type'] or '')} / {(t['plate_number'] or '')}</td>
-            <td>{t['entry_type']}</td>
+            <td>{entry_type_ru}</td>
             <td>{t['liters']}</td>
             <td>{t['speedometer'] if t['speedometer'] is not None else ''}</td>
             <td>{t['entered_by'] or ''}</td>
             <td>{t['comment'] or ''}</td>
             <td>{t['created_at']}</td>
             <td>
-                <a class="small-btn" href="/transactions/delete/{t['id']}" onclick="return confirm('Ростдан ҳам ўчирмоқчимисиз?')">Ўчириш</a>
+                <a class="btn-delete" href="/transactions/delete/{t['id']}" onclick="return confirm('Удалить эту операцию?')">Удалить</a>
             </td>
         </tr>
         """
 
     content = f"""
     <div class="card">
-        <h3>ГСМ журнали</h3>
+        <h3>Журнал ГСМ</h3>
         <table>
             <tr>
                 <th>ID</th>
                 <th>Объект</th>
                 <th>Компания</th>
                 <th>Транспорт</th>
-                <th>Тури</th>
-                <th>Литр</th>
+                <th>Тип</th>
+                <th>Литры</th>
                 <th>Спидометр</th>
-                <th>Киритган</th>
-                <th>Изоҳ</th>
-                <th>Сана</th>
-                <th>Амал</th>
+                <th>Кто ввел</th>
+                <th>Комментарий</th>
+                <th>Дата</th>
+                <th>Действие</th>
             </tr>
             {rows}
         </table>
     </div>
     """
-    return render_page("ГСМ журнали", content)
+    return render_page("Журнал ГСМ", content)
 
-init_db()
 
 @app.route("/transactions/delete/<int:tx_id>")
 def delete_transaction(tx_id):
     execute_query("DELETE FROM fuel_transactions WHERE id=%s", (tx_id,))
-    flash("Операция ўчирилди.", "success")
+    flash("Операция удалена.", "success")
     return redirect(url_for("transactions_page"))
 
 
@@ -784,6 +1024,5 @@ def delete_transaction(tx_id):
 # START
 # =========================
 if __name__ == "__main__":
-    init_db()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
