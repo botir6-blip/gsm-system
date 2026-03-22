@@ -306,8 +306,11 @@ def init_db():
     cur.close()
     conn.close()
 
-
-init_db()
+try:
+    init_db()
+    print("✅ DB тайёр")
+except Exception as e:
+    print("❌ DB хатолик:", e)
 
 
 # =========================
