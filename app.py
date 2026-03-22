@@ -307,21 +307,7 @@ def init_db():
                 ALTER TABLE objects
                 ADD CONSTRAINT objects_name_company_unique UNIQUE (name, company_id)
             """)
-
-    # default admin
-    admin = fetch_one("SELECT * FROM users WHERE username=%s", ("admin",))
-    if not admin:
-        cur.execute("""
-            INSERT INTO users (full_name, username, password_hash, role, is_active)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (
-            "Administrator",
-            "admin",
-            generate_password_hash("admin123"),
-            "admin",
-            True
-        ))
-
+    
     conn.commit()
     cur.close()
     conn.close()
