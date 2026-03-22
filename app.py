@@ -212,6 +212,19 @@ def init_db():
     )
     """)
 
+    transaction_columns = {
+        "vehicle_id": "INTEGER REFERENCES vehicles(id) ON DELETE SET NULL",
+        "object_id": "INTEGER REFERENCES objects(id) ON DELETE SET NULL",
+        "entry_type": "VARCHAR(20) NOT NULL DEFAULT 'приход'",
+        "liters": "NUMERIC(10,2) NOT NULL DEFAULT 0",
+        "speedometer": "INTEGER",
+        "entered_by": "VARCHAR(100)",
+        "comment": "TEXT"
+    }
+    for col_name, col_type in transaction_columns.items():
+        if not column_exists(cur, "fuel_transactions", col_name):
+            cur.execute(f"ALTER TABLE fuel_transactions ADD COLUMN {col_name} {col_type}")
+
     # migrations
     if not column_exists(cur, "objects", "company_id"):
         cur.execute("""
