@@ -1,7 +1,13 @@
 import os
+from functools import wraps
+
 import psycopg
 from psycopg.rows import dict_row
-from flask import Flask, request, redirect, url_for, render_template_string, flash
+from flask import (
+    Flask, request, redirect, url_for, render_template_string,
+    flash, session
+)
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
@@ -13,7 +19,11 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 # DB
 # =========================
 def get_connection():
-    return psycopg.connect(DATABASE_URL, sslmode="require", row_factory=dict_row)
+    return psycopg.connect(
+        DATABASE_URL,
+        sslmode="require",
+        row_factory=dict_row
+    )
 
 
 def normalize_plate(plate: str) -> str:
@@ -51,32 +61,12 @@ def execute_query(query, params=None):
     conn.close()
 
 
-def execute_returning_id(query, params=None):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(query, params or ())
-    new_id = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
-    return new_id
-
-
 def column_exists(cur, table_name, column_name):
     cur.execute("""
         SELECT 1
         FROM information_schema.columns
         WHERE table_name = %s AND column_name = %s
     """, (table_name, column_name))
-    return cur.fetchone() is not None
-
-
-def table_exists(cur, table_name):
-    cur.execute("""
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_name = %s
-    """, (table_name,))
     return cur.fetchone() is not None
 
 
@@ -89,11 +79,20 @@ def index_exists(cur, index_name):
     return cur.fetchone() is not None
 
 
+def constraint_exists(cur, constraint_name):
+    cur.execute("""
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = %s
+    """, (constraint_name,))
+    return cur.fetchone() is not None
+
+
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
 
-    # ========= companies =========
+    # companies
     cur.execute("""
     CREATE TABLE IF NOT EXISTS companies (
         id SERIAL PRIMARY KEY,
@@ -102,7 +101,7 @@ def init_db():
     )
     """)
 
-    # ========= objects =========
+    # objects
     cur.execute("""
     CREATE TABLE IF NOT EXISTS objects (
         id SERIAL PRIMARY KEY,
@@ -112,7 +111,7 @@ def init_db():
     )
     """)
 
-    # ========= vehicles =========
+    # vehicles
     cur.execute("""
     CREATE TABLE IF NOT EXISTS vehicles (
         id SERIAL PRIMARY KEY,
@@ -125,21 +124,41 @@ def init_db():
     )
     """)
 
-    # ========= requests =========
+    # users
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        full_name VARCHAR(150) NOT NULL,
+        username VARCHAR(100) NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role VARCHAR(30) NOT NULL,
+        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # fuel_requests
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fuel_requests (
         id SERIAL PRIMARY KEY,
-        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+
+        requester_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
         object_id INTEGER REFERENCES objects(id) ON DELETE SET NULL,
         vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+
+        requested_by VARCHAR(100),
+        requester_position VARCHAR(100),
+        project_name VARCHAR(150),
 
         requested_liters NUMERIC(10,2) NOT NULL DEFAULT 0,
         approved_liters NUMERIC(10,2),
         actual_liters NUMERIC(10,2),
 
+        fuel_supplier VARCHAR(150),
+
         speedometer INTEGER,
 
-        requested_by VARCHAR(100),
         approved_by VARCHAR(100),
         fueler_name VARCHAR(100),
         controller_name VARCHAR(100),
@@ -150,6 +169,7 @@ def init_db():
         control_comment TEXT,
 
         status VARCHAR(30) NOT NULL DEFAULT 'new',
+
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         approved_at TIMESTAMP,
         fueled_at TIMESTAMP,
@@ -157,7 +177,7 @@ def init_db():
     )
     """)
 
-    # ========= old transactions table =========
+    # journal
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fuel_transactions (
         id SERIAL PRIMARY KEY,
@@ -172,7 +192,7 @@ def init_db():
     )
     """)
 
-    # ========= migrations =========
+    # migrations
     if not column_exists(cur, "objects", "company_id"):
         cur.execute("""
             ALTER TABLE objects
@@ -191,21 +211,54 @@ def init_db():
             ADD COLUMN plate_number_normalized VARCHAR(50)
         """)
 
-    # fill normalized values
+    user_columns = {
+        "company_id": "INTEGER REFERENCES companies(id) ON DELETE SET NULL",
+        "is_active": "BOOLEAN NOT NULL DEFAULT TRUE"
+    }
+    for col_name, col_type in user_columns.items():
+        if not column_exists(cur, "users", col_name):
+            cur.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+
+    request_columns = {
+        "requester_company_id": "INTEGER REFERENCES companies(id) ON DELETE SET NULL",
+        "object_id": "INTEGER REFERENCES objects(id) ON DELETE SET NULL",
+        "vehicle_id": "INTEGER REFERENCES vehicles(id) ON DELETE SET NULL",
+        "requested_by": "VARCHAR(100)",
+        "requester_position": "VARCHAR(100)",
+        "project_name": "VARCHAR(150)",
+        "requested_liters": "NUMERIC(10,2) NOT NULL DEFAULT 0",
+        "approved_liters": "NUMERIC(10,2)",
+        "actual_liters": "NUMERIC(10,2)",
+        "fuel_supplier": "VARCHAR(150)",
+        "speedometer": "INTEGER",
+        "approved_by": "VARCHAR(100)",
+        "fueler_name": "VARCHAR(100)",
+        "controller_name": "VARCHAR(100)",
+        "request_comment": "TEXT",
+        "approval_comment": "TEXT",
+        "fueling_comment": "TEXT",
+        "control_comment": "TEXT",
+        "status": "VARCHAR(30) NOT NULL DEFAULT 'new'",
+        "approved_at": "TIMESTAMP",
+        "fueled_at": "TIMESTAMP",
+        "checked_at": "TIMESTAMP",
+    }
+    for col_name, col_type in request_columns.items():
+        if not column_exists(cur, "fuel_requests", col_name):
+            cur.execute(f"ALTER TABLE fuel_requests ADD COLUMN {col_name} {col_type}")
+
     cur.execute("""
         SELECT id, plate_number
         FROM vehicles
         WHERE plate_number_normalized IS NULL OR plate_number_normalized = ''
     """)
     for row in cur.fetchall():
-        vehicle_id, plate_number = row
         cur.execute("""
             UPDATE vehicles
             SET plate_number_normalized = %s
             WHERE id = %s
-        """, (normalize_plate(plate_number), vehicle_id))
+        """, (normalize_plate(row["plate_number"]), row["id"]))
 
-    # unique index for normalized plate if possible
     if not index_exists(cur, "idx_vehicles_plate_number_normalized_unique"):
         cur.execute("""
             SELECT plate_number_normalized, COUNT(*)
@@ -221,13 +274,7 @@ def init_db():
                 ON vehicles (plate_number_normalized)
             """)
 
-    # unique for objects by (name, company_id) if possible
-    cur.execute("""
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'objects_name_company_unique'
-    """)
-    if not cur.fetchone():
+    if not constraint_exists(cur, "objects_name_company_unique"):
         cur.execute("""
             SELECT name, company_id, COUNT(*)
             FROM objects
@@ -241,12 +288,96 @@ def init_db():
                 ADD CONSTRAINT objects_name_company_unique UNIQUE (name, company_id)
             """)
 
+    # default admin
+    admin = fetch_one("SELECT * FROM users WHERE username=%s", ("admin",))
+    if not admin:
+        cur.execute("""
+            INSERT INTO users (full_name, username, password_hash, role, is_active)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            "Administrator",
+            "admin",
+            generate_password_hash("admin123"),
+            "admin",
+            True
+        ))
+
     conn.commit()
     cur.close()
     conn.close()
 
 
 init_db()
+
+
+# =========================
+# AUTH / ROLES
+# =========================
+def current_user():
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    return fetch_one("""
+        SELECT u.*, c.name AS company_name
+        FROM users u
+        LEFT JOIN companies c ON u.company_id = c.id
+        WHERE u.id = %s AND u.is_active = TRUE
+    """, (user_id,))
+
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not current_user():
+            flash("Сначала войдите в систему.", "error")
+            return redirect(url_for("login"))
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def role_required(*roles):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            user = current_user()
+            if not user:
+                flash("Сначала войдите в систему.", "error")
+                return redirect(url_for("login"))
+            if user["role"] not in roles:
+                flash("У вас нет доступа к этому разделу.", "error")
+                return redirect(url_for("index"))
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def nav_menu():
+    user = current_user()
+    if not user:
+        return f"""
+        <div class="menu">
+            <a href="{url_for('login')}">Вход</a>
+        </div>
+        """
+
+    menu = [f'<a href="{url_for("index")}">Главная</a>']
+
+    if user["role"] == "admin":
+        menu += [
+            f'<a href="{url_for("companies_page")}">Компании</a>',
+            f'<a href="{url_for("objects_page")}">Объекты</a>',
+            f'<a href="{url_for("vehicles_page")}">Транспорт</a>',
+            f'<a href="{url_for("users_page")}">Пользователи</a>',
+        ]
+
+    if user["role"] in ["admin", "requester"]:
+        menu.append(f'<a href="{url_for("new_request_page")}">Новая заявка</a>')
+
+    menu.append(f'<a href="{url_for("requests_page")}">Заявки</a>')
+    menu.append(f'<a href="{url_for("transactions_page")}">Журнал</a>')
+    menu.append(f'<a href="{url_for("logout")}">Выход</a>')
+
+    return f'<div class="menu">{"".join(menu)}</div>'
 
 
 # =========================
@@ -261,17 +392,33 @@ BASE_HTML = """
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #f3f6fb;
+            background: linear-gradient(135deg, #eef4ff 0%, #f7fbff 100%);
             margin: 0;
             padding: 20px;
+            color: #1f2937;
         }
         .container {
-            max-width: 1280px;
+            max-width: 1360px;
             margin: auto;
             background: #ffffff;
             padding: 22px;
-            border-radius: 16px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+            border-radius: 18px;
+            box-shadow: 0 10px 30px rgba(31,41,55,0.08);
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+        }
+        .userbox {
+            background: #f3f6fb;
+            border: 1px solid #dbe4f0;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 14px;
         }
         h1, h2, h3 {
             margin-top: 0;
@@ -290,9 +437,32 @@ BASE_HTML = """
             border-radius: 10px;
             display: inline-block;
             font-size: 14px;
+            box-shadow: 0 4px 12px rgba(37,99,235,0.18);
         }
         .menu a:hover {
             background: #1d4ed8;
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+        .stat {
+            background: linear-gradient(135deg, #ffffff 0%, #f7faff 100%);
+            border: 1px solid #dbe4f0;
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 6px 18px rgba(31,41,55,0.06);
+        }
+        .stat .label {
+            font-size: 13px;
+            color: #6b7280;
+            margin-bottom: 8px;
+        }
+        .stat .value {
+            font-size: 28px;
+            font-weight: bold;
         }
         .grid-2 {
             display: grid;
@@ -300,11 +470,12 @@ BASE_HTML = """
             gap: 18px;
         }
         .card {
-            background: #f9fafb;
-            border: 1px solid #e5e7eb;
+            background: #f9fbff;
+            border: 1px solid #e3ebf5;
             padding: 18px;
-            border-radius: 14px;
+            border-radius: 16px;
             margin-bottom: 18px;
+            box-shadow: 0 6px 16px rgba(31,41,55,0.05);
         }
         form {
             display: grid;
@@ -312,25 +483,33 @@ BASE_HTML = """
         }
         input, select, textarea, button {
             padding: 12px;
-            border-radius: 10px;
-            border: 1px solid #cfd6df;
+            border-radius: 12px;
+            border: 1px solid #cfd8e3;
             font-size: 15px;
             box-sizing: border-box;
             width: 100%;
+            background: #fff;
         }
         textarea {
             min-height: 90px;
             resize: vertical;
         }
         button {
-            background: #16a34a;
+            background: linear-gradient(135deg, #16a34a 0%, #179c54 100%);
             color: white;
             border: none;
             cursor: pointer;
             font-weight: bold;
+            box-shadow: 0 6px 16px rgba(22,163,74,0.2);
         }
         button:hover {
             background: #15803d;
+        }
+        .btn-red {
+            background: linear-gradient(135deg, #dc2626 0%, #c81e1e 100%) !important;
+        }
+        .btn-red:hover {
+            background: #b91c1c !important;
         }
         table {
             width: 100%;
@@ -338,6 +517,8 @@ BASE_HTML = """
             margin-top: 10px;
             background: white;
             font-size: 14px;
+            border-radius: 14px;
+            overflow: hidden;
         }
         th, td {
             border: 1px solid #e5e7eb;
@@ -346,11 +527,11 @@ BASE_HTML = """
             vertical-align: top;
         }
         th {
-            background: #eef2f7;
+            background: #eef4fb;
         }
         .flash {
             padding: 12px;
-            border-radius: 10px;
+            border-radius: 12px;
             margin-bottom: 15px;
         }
         .success {
@@ -369,7 +550,7 @@ BASE_HTML = """
         .btn {
             padding: 7px 10px;
             color: white;
-            border-radius: 8px;
+            border-radius: 9px;
             text-decoration: none;
             font-size: 13px;
             display: inline-block;
@@ -409,8 +590,16 @@ BASE_HTML = """
         .status-checked { background: #7c3aed; }
         .status-rejected { background: #dc2626; }
 
-        @media (max-width: 900px) {
+        @media (max-width: 1100px) {
+            .dashboard {
+                grid-template-columns: repeat(2, 1fr);
+            }
             .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 700px) {
+            .dashboard {
                 grid-template-columns: 1fr;
             }
             .container {
@@ -424,17 +613,12 @@ BASE_HTML = """
 </head>
 <body>
 <div class="container">
-    <h1>{{ title }}</h1>
-
-    <div class="menu">
-        <a href="{{ url_for('index') }}">Главная</a>
-        <a href="{{ url_for('companies_page') }}">Компании</a>
-        <a href="{{ url_for('objects_page') }}">Объекты</a>
-        <a href="{{ url_for('vehicles_page') }}">Транспорт</a>
-        <a href="{{ url_for('new_request_page') }}">Новая заявка</a>
-        <a href="{{ url_for('requests_page') }}">Заявки</a>
-        <a href="{{ url_for('transactions_page') }}">Журнал</a>
+    <div class="topbar">
+        <h1>{{ title }}</h1>
+        {{ user_box|safe }}
     </div>
+
+    {{ menu|safe }}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -452,7 +636,26 @@ BASE_HTML = """
 
 
 def render_page(title, content):
-    return render_template_string(BASE_HTML, title=title, content=content)
+    user = current_user()
+    if user:
+        user_box = f"""
+        <div class="userbox">
+            <b>{user['full_name']}</b><br>
+            Логин: {user['username']} |
+            Роль: {user['role']} |
+            Компания: {user['company_name'] or '-'}
+        </div>
+        """
+    else:
+        user_box = '<div class="userbox">Гость</div>'
+
+    return render_template_string(
+        BASE_HTML,
+        title=title,
+        content=content,
+        menu=nav_menu(),
+        user_box=user_box
+    )
 
 
 def status_badge(status):
@@ -468,65 +671,342 @@ def status_badge(status):
 
 
 # =========================
-# HOME
+# LOGIN / LOGOUT
+# =========================
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user():
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+
+        user = fetch_one("""
+            SELECT *
+            FROM users
+            WHERE username = %s AND is_active = TRUE
+        """, (username,))
+
+        if not user or not check_password_hash(user["password_hash"], password):
+            flash("Неверный логин или пароль.", "error")
+            return redirect(url_for("login"))
+
+        session["user_id"] = user["id"]
+        flash("Вход выполнен.", "success")
+        return redirect(url_for("index"))
+
+    content = """
+    <div class="card" style="max-width:520px; margin:auto;">
+        <h3>Вход в систему</h3>
+        <form method="POST">
+            <input type="text" name="username" placeholder="Логин" required>
+            <input type="password" name="password" placeholder="Пароль" required>
+            <button type="submit">Войти</button>
+        </form>
+        <p><b>Стартовый админ:</b> admin / admin123</p>
+    </div>
+    """
+    return render_page("Вход", content)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("Вы вышли из системы.", "success")
+    return redirect(url_for("login"))
+
+
+# =========================
+# DASHBOARD
 # =========================
 @app.route("/")
+@login_required
 def index():
-    company_count = fetch_one("SELECT COUNT(*) AS cnt FROM companies")["cnt"]
-    object_count = fetch_one("SELECT COUNT(*) AS cnt FROM objects")["cnt"]
-    vehicle_count = fetch_one("SELECT COUNT(*) AS cnt FROM vehicles")["cnt"]
-    request_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests")["cnt"]
+    user = current_user()
 
-    new_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='new'")["cnt"]
-    approved_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='approved'")["cnt"]
-    fueled_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='fueled'")["cnt"]
-    checked_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='checked'")["cnt"]
+    if user["role"] == "admin":
+        company_count = fetch_one("SELECT COUNT(*) AS cnt FROM companies")["cnt"]
+        object_count = fetch_one("SELECT COUNT(*) AS cnt FROM objects")["cnt"]
+        vehicle_count = fetch_one("SELECT COUNT(*) AS cnt FROM vehicles")["cnt"]
+        request_total = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests")["cnt"]
+        new_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='new'")["cnt"]
+        approved_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='approved'")["cnt"]
+        fueled_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='fueled'")["cnt"]
+        checked_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE status='checked'")["cnt"]
+    else:
+        company_id = user["company_id"]
+        company_count = 1 if company_id else 0
+        object_count = fetch_one("SELECT COUNT(*) AS cnt FROM objects WHERE company_id=%s", (company_id,))["cnt"] if company_id else 0
+        vehicle_count = fetch_one("SELECT COUNT(*) AS cnt FROM vehicles WHERE company_id=%s", (company_id,))["cnt"] if company_id else 0
+        request_total = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE requester_company_id=%s", (company_id,))["cnt"] if company_id else 0
+        new_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE requester_company_id=%s AND status='new'", (company_id,))["cnt"] if company_id else 0
+        approved_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE requester_company_id=%s AND status='approved'", (company_id,))["cnt"] if company_id else 0
+        fueled_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE requester_company_id=%s AND status='fueled'", (company_id,))["cnt"] if company_id else 0
+        checked_count = fetch_one("SELECT COUNT(*) AS cnt FROM fuel_requests WHERE requester_company_id=%s AND status='checked'", (company_id,))["cnt"] if company_id else 0
 
     content = f"""
+    <div class="dashboard">
+        <div class="stat">
+            <div class="label">Компании</div>
+            <div class="value">{company_count}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Объекты</div>
+            <div class="value">{object_count}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Транспорт</div>
+            <div class="value">{vehicle_count}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Всего заявок</div>
+            <div class="value">{request_total}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Новые</div>
+            <div class="value">{new_count}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Разрешенные</div>
+            <div class="value">{approved_count}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Заправленные</div>
+            <div class="value">{fueled_count}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Проверенные</div>
+            <div class="value">{checked_count}</div>
+        </div>
+    </div>
+
     <div class="grid-2">
         <div class="card">
-            <h3>Справочники</h3>
-            <p><b>Компании:</b> {company_count}</p>
-            <p><b>Объекты:</b> {object_count}</p>
-            <p><b>Транспорт:</b> {vehicle_count}</p>
+            <h3>Ваш доступ</h3>
+            <p><b>Роль:</b> {user['role']}</p>
+            <p><b>Пользователь:</b> {user['full_name']}</p>
+            <p><b>Компания:</b> {user['company_name'] or '-'}</p>
         </div>
         <div class="card">
-            <h3>Заявки на ГСМ</h3>
-            <p><b>Всего заявок:</b> {request_count}</p>
-            <p><b>Новые:</b> {new_count}</p>
-            <p><b>Разрешенные:</b> {approved_count}</p>
-            <p><b>Заправленные:</b> {fueled_count}</p>
-            <p><b>Проверенные:</b> {checked_count}</p>
+            <h3>Порядок работы</h3>
+            <p>1. requester — создает заявку</p>
+            <p>2. approver — рассматривает и указывает поставщика дизеля</p>
+            <p>3. fueler — вводит фактическую заправку</p>
+            <p>4. controller — завершает проверку</p>
+            <p>admin — управляет справочниками и пользователями</p>
         </div>
+    </div>
+    """
+    return render_page("Dashboard системы ГСМ", content)
+
+
+# =========================
+# USERS
+# =========================
+@app.route("/users", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
+def users_page():
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        role = request.form.get("role", "").strip()
+        company_id = request.form.get("company_id") or None
+
+        if not full_name or not username or not password or not role:
+            flash("Заполните обязательные поля.", "error")
+            return redirect(url_for("users_page"))
+
+        existing = fetch_one("SELECT * FROM users WHERE username=%s", (username,))
+        if existing:
+            flash("Такой логин уже существует.", "error")
+            return redirect(url_for("users_page"))
+
+        execute_query("""
+            INSERT INTO users (full_name, username, password_hash, role, company_id, is_active)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
+        """, (
+            full_name,
+            username,
+            generate_password_hash(password),
+            role,
+            company_id
+        ))
+
+        flash("Пользователь создан.", "success")
+        return redirect(url_for("users_page"))
+
+    companies = fetch_all("SELECT * FROM companies ORDER BY name")
+    users = fetch_all("""
+        SELECT u.*, c.name AS company_name
+        FROM users u
+        LEFT JOIN companies c ON u.company_id = c.id
+        ORDER BY u.id DESC
+    """)
+
+    company_options = "".join(
+        [f"<option value='{c['id']}'>{c['name']}</option>" for c in companies]
+    )
+
+    rows = ""
+    for u in users:
+        rows += f"""
+        <tr>
+            <td>{u['id']}</td>
+            <td>{u['full_name']}</td>
+            <td>{u['username']}</td>
+            <td>{u['role']}</td>
+            <td>{u['company_name'] or ''}</td>
+            <td>{"Да" if u['is_active'] else "Нет"}</td>
+            <td>
+                <div class="actions">
+                    <a class="btn btn-edit" href="/users/edit/{u['id']}">Редактировать</a>
+                </div>
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="card">
+        <h3>Добавить пользователя</h3>
+        <form method="POST">
+            <input type="text" name="full_name" placeholder="ФИО" required>
+            <input type="text" name="username" placeholder="Логин" required>
+            <input type="password" name="password" placeholder="Пароль" required>
+            <select name="role" required>
+                <option value="">Выберите роль</option>
+                <option value="admin">admin</option>
+                <option value="requester">requester</option>
+                <option value="approver">approver</option>
+                <option value="fueler">fueler</option>
+                <option value="controller">controller</option>
+            </select>
+            <select name="company_id">
+                <option value="">Компания (необязательно для admin)</option>
+                {company_options}
+            </select>
+            <button type="submit">Сохранить</button>
+        </form>
     </div>
 
     <div class="card">
-        <h3>Логика работы</h3>
-        <p>1. Заявитель создает заявку</p>
-        <p>2. Ответственный руководитель разрешает или отклоняет заявку</p>
-        <p>3. Заправщик вводит фактически выданное количество топлива</p>
-        <p>4. Контролер проверяет и завершает операцию</p>
+        <h3>Пользователи</h3>
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>ФИО</th>
+                <th>Логин</th>
+                <th>Роль</th>
+                <th>Компания</th>
+                <th>Активен</th>
+                <th>Действия</th>
+            </tr>
+            {rows}
+        </table>
     </div>
     """
-    return render_page("Система заявок и контроля ГСМ", content)
+    return render_page("Пользователи", content)
+
+
+@app.route("/users/edit/<int:user_id>", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
+def edit_user(user_id):
+    user_row = fetch_one("SELECT * FROM users WHERE id=%s", (user_id,))
+    if not user_row:
+        flash("Пользователь не найден.", "error")
+        return redirect(url_for("users_page"))
+
+    companies = fetch_all("SELECT * FROM companies ORDER BY name")
+
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        role = request.form.get("role", "").strip()
+        company_id = request.form.get("company_id") or None
+        is_active = True if request.form.get("is_active") == "on" else False
+
+        if not full_name or not username or not role:
+            flash("Заполните обязательные поля.", "error")
+            return redirect(url_for("edit_user", user_id=user_id))
+
+        existing = fetch_one("SELECT * FROM users WHERE username=%s AND id<>%s", (username, user_id))
+        if existing:
+            flash("Другой пользователь с таким логином уже существует.", "error")
+            return redirect(url_for("edit_user", user_id=user_id))
+
+        if password:
+            execute_query("""
+                UPDATE users
+                SET full_name=%s, username=%s, password_hash=%s, role=%s, company_id=%s, is_active=%s
+                WHERE id=%s
+            """, (
+                full_name, username, generate_password_hash(password), role, company_id, is_active, user_id
+            ))
+        else:
+            execute_query("""
+                UPDATE users
+                SET full_name=%s, username=%s, role=%s, company_id=%s, is_active=%s
+                WHERE id=%s
+            """, (
+                full_name, username, role, company_id, is_active, user_id
+            ))
+
+        flash("Пользователь обновлен.", "success")
+        return redirect(url_for("users_page"))
+
+    company_options = "".join([
+        f"<option value='{c['id']}' {'selected' if c['id'] == user_row['company_id'] else ''}>{c['name']}</option>"
+        for c in companies
+    ])
+
+    checked = "checked" if user_row["is_active"] else ""
+
+    content = f"""
+    <div class="card">
+        <h3>Редактирование пользователя</h3>
+        <form method="POST">
+            <input type="text" name="full_name" value="{user_row['full_name']}" required>
+            <input type="text" name="username" value="{user_row['username']}" required>
+            <input type="password" name="password" placeholder="Новый пароль (если нужно)">
+            <select name="role" required>
+                <option value="admin" {"selected" if user_row["role"]=="admin" else ""}>admin</option>
+                <option value="requester" {"selected" if user_row["role"]=="requester" else ""}>requester</option>
+                <option value="approver" {"selected" if user_row["role"]=="approver" else ""}>approver</option>
+                <option value="fueler" {"selected" if user_row["role"]=="fueler" else ""}>fueler</option>
+                <option value="controller" {"selected" if user_row["role"]=="controller" else ""}>controller</option>
+            </select>
+            <select name="company_id">
+                <option value="">Компания</option>
+                {company_options}
+            </select>
+            <label><input type="checkbox" name="is_active" {checked}> Активен</label>
+            <button type="submit">Сохранить изменения</button>
+        </form>
+        <br>
+        <a class="btn btn-back" href="{url_for('users_page')}">Назад</a>
+    </div>
+    """
+    return render_page("Редактирование пользователя", content)
 
 
 # =========================
 # COMPANIES
 # =========================
 @app.route("/companies", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
 def companies_page():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-
         if not name:
             flash("Введите название компании.", "error")
             return redirect(url_for("companies_page"))
 
-        existing = fetch_one(
-            "SELECT * FROM companies WHERE LOWER(name)=LOWER(%s)",
-            (name,)
-        )
+        existing = fetch_one("SELECT * FROM companies WHERE LOWER(name)=LOWER(%s)", (name,))
         if existing:
             flash("Такая компания уже существует.", "error")
             return redirect(url_for("companies_page"))
@@ -560,15 +1040,10 @@ def companies_page():
             <button type="submit">Сохранить</button>
         </form>
     </div>
-
     <div class="card">
         <h3>Список компаний</h3>
         <table>
-            <tr>
-                <th>ID</th>
-                <th>Название</th>
-                <th>Действия</th>
-            </tr>
+            <tr><th>ID</th><th>Название</th><th>Действия</th></tr>
             {rows}
         </table>
     </div>
@@ -577,6 +1052,8 @@ def companies_page():
 
 
 @app.route("/companies/edit/<int:company_id>", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
 def edit_company(company_id):
     company = fetch_one("SELECT * FROM companies WHERE id=%s", (company_id,))
     if not company:
@@ -585,15 +1062,11 @@ def edit_company(company_id):
 
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-
         if not name:
             flash("Введите название компании.", "error")
             return redirect(url_for("edit_company", company_id=company_id))
 
-        existing = fetch_one(
-            "SELECT * FROM companies WHERE LOWER(name)=LOWER(%s) AND id<>%s",
-            (name, company_id)
-        )
+        existing = fetch_one("SELECT * FROM companies WHERE LOWER(name)=LOWER(%s) AND id<>%s", (name, company_id))
         if existing:
             flash("Другая компания с таким названием уже существует.", "error")
             return redirect(url_for("edit_company", company_id=company_id))
@@ -617,6 +1090,8 @@ def edit_company(company_id):
 
 
 @app.route("/companies/delete/<int:company_id>")
+@login_required
+@role_required("admin")
 def delete_company(company_id):
     execute_query("DELETE FROM companies WHERE id=%s", (company_id,))
     flash("Компания удалена.", "success")
@@ -627,6 +1102,8 @@ def delete_company(company_id):
 # OBJECTS
 # =========================
 @app.route("/objects", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
 def objects_page():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -644,10 +1121,7 @@ def objects_page():
             flash("Такой объект уже существует у этой компании.", "error")
             return redirect(url_for("objects_page"))
 
-        execute_query(
-            "INSERT INTO objects (name, company_id) VALUES (%s, %s)",
-            (name, company_id)
-        )
+        execute_query("INSERT INTO objects (name, company_id) VALUES (%s, %s)", (name, company_id))
         flash("Объект добавлен.", "success")
         return redirect(url_for("objects_page"))
 
@@ -659,10 +1133,7 @@ def objects_page():
         ORDER BY o.id DESC
     """)
 
-    company_options = "".join([
-        f"<option value='{c['id']}'>{c['name']}</option>"
-        for c in companies
-    ])
+    company_options = "".join([f"<option value='{c['id']}'>{c['name']}</option>" for c in companies])
 
     rows = ""
     for o in objects:
@@ -692,16 +1163,10 @@ def objects_page():
             <button type="submit">Сохранить</button>
         </form>
     </div>
-
     <div class="card">
         <h3>Список объектов</h3>
         <table>
-            <tr>
-                <th>ID</th>
-                <th>Объект</th>
-                <th>Компания</th>
-                <th>Действия</th>
-            </tr>
+            <tr><th>ID</th><th>Объект</th><th>Компания</th><th>Действия</th></tr>
             {rows}
         </table>
     </div>
@@ -710,6 +1175,8 @@ def objects_page():
 
 
 @app.route("/objects/edit/<int:object_id>", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
 def edit_object(object_id):
     obj = fetch_one("SELECT * FROM objects WHERE id=%s", (object_id,))
     if not obj:
@@ -734,12 +1201,7 @@ def edit_object(object_id):
             flash("Такой объект уже существует у этой компании.", "error")
             return redirect(url_for("edit_object", object_id=object_id))
 
-        execute_query("""
-            UPDATE objects
-            SET name=%s, company_id=%s
-            WHERE id=%s
-        """, (name, company_id, object_id))
-
+        execute_query("UPDATE objects SET name=%s, company_id=%s WHERE id=%s", (name, company_id, object_id))
         flash("Объект обновлен.", "success")
         return redirect(url_for("objects_page"))
 
@@ -767,6 +1229,8 @@ def edit_object(object_id):
 
 
 @app.route("/objects/delete/<int:object_id>")
+@login_required
+@role_required("admin")
 def delete_object(object_id):
     execute_query("DELETE FROM objects WHERE id=%s", (object_id,))
     flash("Объект удален.", "success")
@@ -777,6 +1241,8 @@ def delete_object(object_id):
 # VEHICLES
 # =========================
 @app.route("/vehicles", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
 def vehicles_page():
     if request.method == "POST":
         brand = request.form.get("brand", "").strip()
@@ -789,11 +1255,7 @@ def vehicles_page():
             return redirect(url_for("vehicles_page"))
 
         normalized = normalize_plate(plate_number)
-
-        existing = fetch_one("""
-            SELECT * FROM vehicles
-            WHERE plate_number_normalized=%s
-        """, (normalized,))
+        existing = fetch_one("SELECT * FROM vehicles WHERE plate_number_normalized=%s", (normalized,))
         if existing:
             flash("Такой транспорт уже существует. Дубликат госномера.", "error")
             return redirect(url_for("vehicles_page"))
@@ -814,10 +1276,7 @@ def vehicles_page():
         ORDER BY v.id DESC
     """)
 
-    company_options = "".join([
-        f"<option value='{c['id']}'>{c['name']}</option>"
-        for c in companies
-    ])
+    company_options = "".join([f"<option value='{c['id']}'>{c['name']}</option>" for c in companies])
 
     rows = ""
     for v in vehicles:
@@ -851,18 +1310,10 @@ def vehicles_page():
             <button type="submit">Сохранить</button>
         </form>
     </div>
-
     <div class="card">
         <h3>Список транспорта</h3>
         <table>
-            <tr>
-                <th>ID</th>
-                <th>Марка</th>
-                <th>Тип</th>
-                <th>Гос. номер</th>
-                <th>Компания</th>
-                <th>Действия</th>
-            </tr>
+            <tr><th>ID</th><th>Марка</th><th>Тип</th><th>Гос. номер</th><th>Компания</th><th>Действия</th></tr>
             {rows}
         </table>
     </div>
@@ -871,6 +1322,8 @@ def vehicles_page():
 
 
 @app.route("/vehicles/edit/<int:vehicle_id>", methods=["GET", "POST"])
+@login_required
+@role_required("admin")
 def edit_vehicle(vehicle_id):
     vehicle = fetch_one("SELECT * FROM vehicles WHERE id=%s", (vehicle_id,))
     if not vehicle:
@@ -890,7 +1343,6 @@ def edit_vehicle(vehicle_id):
             return redirect(url_for("edit_vehicle", vehicle_id=vehicle_id))
 
         normalized = normalize_plate(plate_number)
-
         existing = fetch_one("""
             SELECT * FROM vehicles
             WHERE plate_number_normalized=%s AND id<>%s
@@ -901,11 +1353,7 @@ def edit_vehicle(vehicle_id):
 
         execute_query("""
             UPDATE vehicles
-            SET brand=%s,
-                vehicle_type=%s,
-                plate_number=%s,
-                plate_number_normalized=%s,
-                company_id=%s
+            SET brand=%s, vehicle_type=%s, plate_number=%s, plate_number_normalized=%s, company_id=%s
             WHERE id=%s
         """, (brand, vehicle_type, plate_number, normalized, company_id, vehicle_id))
 
@@ -938,6 +1386,8 @@ def edit_vehicle(vehicle_id):
 
 
 @app.route("/vehicles/delete/<int:vehicle_id>")
+@login_required
+@role_required("admin")
 def delete_vehicle(vehicle_id):
     execute_query("DELETE FROM vehicles WHERE id=%s", (vehicle_id,))
     flash("Транспорт удален.", "success")
@@ -948,17 +1398,36 @@ def delete_vehicle(vehicle_id):
 # NEW REQUEST
 # =========================
 @app.route("/requests/new", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "requester")
 def new_request_page():
+    user = current_user()
+
     if request.method == "POST":
-        company_id = request.form.get("company_id")
+        requester_company_id = request.form.get("requester_company_id")
         object_id = request.form.get("object_id")
         vehicle_id = request.form.get("vehicle_id")
-        requested_liters = request.form.get("requested_liters", "").strip()
         requested_by = request.form.get("requested_by", "").strip()
+        requester_position = request.form.get("requester_position", "").strip()
+        project_name = request.form.get("project_name", "").strip()
+        requested_liters = request.form.get("requested_liters", "").strip()
         request_comment = request.form.get("request_comment", "").strip()
 
-        if not company_id or not object_id or not vehicle_id or not requested_liters or not requested_by:
+        if user["role"] != "admin":
+            requester_company_id = str(user["company_id"]) if user["company_id"] else None
+
+        if not requester_company_id or not object_id or not vehicle_id or not requested_by or not requested_liters:
             flash("Заполните обязательные поля.", "error")
+            return redirect(url_for("new_request_page"))
+
+        obj = fetch_one("SELECT * FROM objects WHERE id=%s", (object_id,))
+        veh = fetch_one("SELECT * FROM vehicles WHERE id=%s", (vehicle_id,))
+        if not obj or not veh:
+            flash("Неверно выбран объект или транспорт.", "error")
+            return redirect(url_for("new_request_page"))
+
+        if str(obj["company_id"]) != str(requester_company_id) or str(veh["company_id"]) != str(requester_company_id):
+            flash("Объект и транспорт должны относиться к выбранной компании.", "error")
             return redirect(url_for("new_request_page"))
 
         try:
@@ -972,31 +1441,49 @@ def new_request_page():
 
         execute_query("""
             INSERT INTO fuel_requests (
-                company_id, object_id, vehicle_id,
-                requested_liters, requested_by, request_comment, status
+                requester_company_id, object_id, vehicle_id,
+                requested_by, requester_position, project_name,
+                requested_liters, request_comment, status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, 'new')
-        """, (company_id, object_id, vehicle_id, liters_value, requested_by, request_comment))
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'new')
+        """, (
+            requester_company_id, object_id, vehicle_id,
+            requested_by, requester_position, project_name,
+            liters_value, request_comment
+        ))
 
         flash("Заявка создана.", "success")
         return redirect(url_for("requests_page"))
 
-    companies = fetch_all("SELECT * FROM companies ORDER BY name")
-    objects = fetch_all("""
-        SELECT o.id, o.name, c.name AS company_name
-        FROM objects o
-        LEFT JOIN companies c ON o.company_id = c.id
-        ORDER BY c.name, o.name
-    """)
-    vehicles = fetch_all("""
-        SELECT v.id, v.brand, v.vehicle_type, v.plate_number, c.name AS company_name
-        FROM vehicles v
-        LEFT JOIN companies c ON v.company_id = c.id
-        ORDER BY c.name, v.brand, v.plate_number
-    """)
+    if user["role"] == "admin":
+        companies = fetch_all("SELECT * FROM companies ORDER BY name")
+        selected_company_id = request.args.get("company_id") or ""
+    else:
+        companies = fetch_all("SELECT * FROM companies WHERE id=%s", (user["company_id"],)) if user["company_id"] else []
+        selected_company_id = str(user["company_id"]) if user["company_id"] else ""
+
+    if selected_company_id:
+        objects = fetch_all("""
+            SELECT o.id, o.name, c.name AS company_name
+            FROM objects o
+            LEFT JOIN companies c ON o.company_id = c.id
+            WHERE o.company_id = %s
+            ORDER BY o.name
+        """, (selected_company_id,))
+
+        vehicles = fetch_all("""
+            SELECT v.id, v.brand, v.vehicle_type, v.plate_number, c.name AS company_name
+            FROM vehicles v
+            LEFT JOIN companies c ON v.company_id = c.id
+            WHERE v.company_id = %s
+            ORDER BY v.brand, v.plate_number
+        """, (selected_company_id,))
+    else:
+        objects = []
+        vehicles = []
 
     company_options = "".join([
-        f"<option value='{c['id']}'>{c['name']}</option>"
+        f"<option value='{c['id']}' {'selected' if str(c['id']) == str(selected_company_id) else ''}>{c['name']}</option>"
         for c in companies
     ])
 
@@ -1006,35 +1493,52 @@ def new_request_page():
     ])
 
     vehicle_options = "".join([
-        f"<option value='{v['id']}'>{v['brand']} / {v['vehicle_type']} / {v['plate_number']} / {v['company_name'] or ''}</option>"
+        f"<option value='{v['id']}'>{v['brand']} / {v['vehicle_type']} / {v['plate_number']}</option>"
         for v in vehicles
     ])
+
+    company_selector = ""
+    if user["role"] == "admin":
+        company_selector = f"""
+        <select name="requester_company_id" id="requester_company_id" required onchange="filterByCompany(this.value)">
+            <option value="">Компания-заявитель</option>
+            {company_options}
+        </select>
+        """
+    else:
+        company_selector = f"""
+        <input type="hidden" name="requester_company_id" value="{selected_company_id}">
+        <input type="text" value="{user['company_name'] or ''}" readonly>
+        """
 
     content = f"""
     <div class="card">
         <h3>Новая заявка на ГСМ</h3>
         <form method="POST">
-            <select name="company_id" required>
-                <option value="">Выберите компанию</option>
-                {company_options}
-            </select>
-
+            {company_selector}
+            <input type="text" name="requested_by" placeholder="Ответственное лицо / заявитель" value="{user['full_name']}" required>
+            <input type="text" name="requester_position" placeholder="Должность">
             <select name="object_id" required>
-                <option value="">Выберите объект</option>
+                <option value="">Объект, где нужна заправка</option>
                 {object_options}
             </select>
-
+            <input type="text" name="project_name" placeholder="Проект">
             <select name="vehicle_id" required>
-                <option value="">Выберите транспорт</option>
+                <option value="">Транспорт</option>
                 {vehicle_options}
             </select>
-
             <input type="number" step="0.01" name="requested_liters" placeholder="Запрошено литров" required>
-            <input type="text" name="requested_by" placeholder="Заявитель" required>
-            <textarea name="request_comment" placeholder="Комментарий к заявке"></textarea>
+            <textarea name="request_comment" placeholder="Комментарий заявителя"></textarea>
             <button type="submit">Создать заявку</button>
         </form>
     </div>
+
+    <script>
+    function filterByCompany(companyId) {{
+        if (!companyId) return;
+        window.location = "{url_for('new_request_page')}?company_id=" + encodeURIComponent(companyId);
+    }}
+    </script>
     """
     return render_page("Новая заявка", content)
 
@@ -1043,42 +1547,62 @@ def new_request_page():
 # REQUESTS LIST
 # =========================
 @app.route("/requests")
+@login_required
 def requests_page():
-    rows_data = fetch_all("""
+    user = current_user()
+
+    base_query = """
         SELECT
             fr.*,
-            c.name AS company_name,
+            rc.name AS requester_company_name,
             o.name AS object_name,
             v.brand,
             v.vehicle_type,
             v.plate_number
         FROM fuel_requests fr
-        LEFT JOIN companies c ON fr.company_id = c.id
+        LEFT JOIN companies rc ON fr.requester_company_id = rc.id
         LEFT JOIN objects o ON fr.object_id = o.id
         LEFT JOIN vehicles v ON fr.vehicle_id = v.id
-        ORDER BY fr.id DESC
-    """)
+    """
+    params = ()
+
+    if user["role"] != "admin":
+        if user["role"] == "requester":
+            base_query += " WHERE fr.requester_company_id = %s "
+            params = (user["company_id"],)
+        elif user["role"] == "approver":
+            base_query += " WHERE fr.status = 'new' "
+        elif user["role"] == "fueler":
+            base_query += " WHERE fr.status = 'approved' "
+        elif user["role"] == "controller":
+            base_query += " WHERE fr.status = 'fueled' "
+
+    base_query += " ORDER BY fr.id DESC "
+
+    rows_data = fetch_all(base_query, params)
 
     rows = ""
     for r in rows_data:
         actions = [f'<a class="btn btn-view" href="/requests/view/{r["id"]}">Открыть</a>']
 
-        if r["status"] == "new":
-            actions.append(f'<a class="btn btn-approve" href="/requests/approve/{r["id"]}">Разрешить</a>')
-        if r["status"] == "approved":
+        if r["status"] == "new" and user["role"] in ["admin", "approver"]:
+            actions.append(f'<a class="btn btn-approve" href="/requests/approve/{r["id"]}">Рассмотреть</a>')
+        if r["status"] == "approved" and user["role"] in ["admin", "fueler"]:
             actions.append(f'<a class="btn btn-fuel" href="/requests/fuel/{r["id"]}">Заправить</a>')
-        if r["status"] == "fueled":
+        if r["status"] == "fueled" and user["role"] in ["admin", "controller"]:
             actions.append(f'<a class="btn btn-check" href="/requests/check/{r["id"]}">Проверить</a>')
 
         rows += f"""
         <tr>
             <td>{r['id']}</td>
             <td>{status_badge(r['status'])}</td>
-            <td>{r['company_name'] or ''}</td>
+            <td>{r['requester_company_name'] or ''}</td>
+            <td>{r['requested_by'] or ''}</td>
             <td>{r['object_name'] or ''}</td>
+            <td>{r['project_name'] or ''}</td>
+            <td>{r['fuel_supplier'] or ''}</td>
             <td>{(r['brand'] or '')} / {(r['vehicle_type'] or '')} / {(r['plate_number'] or '')}</td>
             <td>{r['requested_liters']}</td>
-            <td>{r['requested_by'] or ''}</td>
             <td><div class="actions">{''.join(actions)}</div></td>
         </tr>
         """
@@ -1090,11 +1614,13 @@ def requests_page():
             <tr>
                 <th>ID</th>
                 <th>Статус</th>
-                <th>Компания</th>
+                <th>Компания-заявитель</th>
+                <th>Ответственное лицо</th>
                 <th>Объект</th>
+                <th>Проект</th>
+                <th>Кто дает дизель</th>
                 <th>Транспорт</th>
                 <th>Запрошено</th>
-                <th>Заявитель</th>
                 <th>Действия</th>
             </tr>
             {rows}
@@ -1108,22 +1634,26 @@ def requests_page():
 # VIEW REQUEST
 # =========================
 @app.route("/requests/view/<int:request_id>")
+@login_required
 def view_request(request_id):
     r = fetch_one("""
         SELECT
             fr.*,
-            c.name AS company_name,
+            rc.name AS requester_company_name,
             o.name AS object_name,
+            oc.name AS object_company_name,
             v.brand,
             v.vehicle_type,
-            v.plate_number
+            v.plate_number,
+            vc.name AS vehicle_company_name
         FROM fuel_requests fr
-        LEFT JOIN companies c ON fr.company_id = c.id
+        LEFT JOIN companies rc ON fr.requester_company_id = rc.id
         LEFT JOIN objects o ON fr.object_id = o.id
+        LEFT JOIN companies oc ON o.company_id = oc.id
         LEFT JOIN vehicles v ON fr.vehicle_id = v.id
+        LEFT JOIN companies vc ON v.company_id = vc.id
         WHERE fr.id = %s
     """, (request_id,))
-
     if not r:
         flash("Заявка не найдена.", "error")
         return redirect(url_for("requests_page"))
@@ -1132,73 +1662,68 @@ def view_request(request_id):
     <div class="card">
         <h3>Заявка №{r['id']}</h3>
         <p><b>Статус:</b> {status_badge(r['status'])}</p>
-        <p><b>Компания:</b> {r['company_name'] or ''}</p>
-        <p><b>Объект:</b> {r['object_name'] or ''}</p>
-        <p><b>Транспорт:</b> {(r['brand'] or '')} / {(r['vehicle_type'] or '')} / {(r['plate_number'] or '')}</p>
-
         <hr>
-
+        <p><b>Компания-заявитель:</b> {r['requester_company_name'] or ''}</p>
+        <p><b>Ответственное лицо:</b> {r['requested_by'] or ''}</p>
+        <p><b>Должность:</b> {r['requester_position'] or ''}</p>
+        <p><b>Объект заправки:</b> {r['object_name'] or ''}</p>
+        <p><b>Компания объекта:</b> {r['object_company_name'] or ''}</p>
+        <p><b>Проект:</b> {r['project_name'] or ''}</p>
+        <p><b>Транспорт:</b> {(r['brand'] or '')} / {(r['vehicle_type'] or '')} / {(r['plate_number'] or '')}</p>
+        <p><b>Компания транспорта:</b> {r['vehicle_company_name'] or ''}</p>
         <p><b>Запрошено литров:</b> {r['requested_liters']}</p>
-        <p><b>Заявитель:</b> {r['requested_by'] or ''}</p>
         <p><b>Комментарий заявителя:</b> {r['request_comment'] or ''}</p>
         <p><b>Дата заявки:</b> {r['created_at']}</p>
-
         <hr>
-
         <p><b>Разрешено литров:</b> {r['approved_liters'] if r['approved_liters'] is not None else ''}</p>
         <p><b>Кто разрешил:</b> {r['approved_by'] or ''}</p>
+        <p><b>Дизель обеспечивает:</b> {r['fuel_supplier'] or ''}</p>
         <p><b>Комментарий руководителя:</b> {r['approval_comment'] or ''}</p>
-        <p><b>Дата разрешения:</b> {r['approved_at'] or ''}</p>
-
+        <p><b>Дата решения:</b> {r['approved_at'] or ''}</p>
         <hr>
-
         <p><b>Фактически заправлено:</b> {r['actual_liters'] if r['actual_liters'] is not None else ''}</p>
         <p><b>Спидометр:</b> {r['speedometer'] if r['speedometer'] is not None else ''}</p>
         <p><b>Заправщик:</b> {r['fueler_name'] or ''}</p>
         <p><b>Комментарий заправщика:</b> {r['fueling_comment'] or ''}</p>
         <p><b>Дата заправки:</b> {r['fueled_at'] or ''}</p>
-
         <hr>
-
         <p><b>Контролер:</b> {r['controller_name'] or ''}</p>
         <p><b>Комментарий контролера:</b> {r['control_comment'] or ''}</p>
         <p><b>Дата проверки:</b> {r['checked_at'] or ''}</p>
-
         <br>
-        <div class="actions">
-            <a class="btn btn-back" href="{url_for('requests_page')}">Назад</a>
-        </div>
+        <a class="btn btn-back" href="{url_for('requests_page')}">Назад</a>
     </div>
     """
     return render_page(f"Заявка №{request_id}", content)
 
 
 # =========================
-# APPROVE REQUEST
+# APPROVE
 # =========================
 @app.route("/requests/approve/<int:request_id>", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "approver")
 def approve_request(request_id):
     r = fetch_one("""
         SELECT
             fr.*,
-            c.name AS company_name,
+            rc.name AS requester_company_name,
             o.name AS object_name,
             v.brand,
             v.vehicle_type,
             v.plate_number
         FROM fuel_requests fr
-        LEFT JOIN companies c ON fr.company_id = c.id
+        LEFT JOIN companies rc ON fr.requester_company_id = rc.id
         LEFT JOIN objects o ON fr.object_id = o.id
         LEFT JOIN vehicles v ON fr.vehicle_id = v.id
         WHERE fr.id = %s
     """, (request_id,))
-
     if not r:
         flash("Заявка не найдена.", "error")
         return redirect(url_for("requests_page"))
 
     if r["status"] != "new":
-        flash("Разрешить можно только новую заявку.", "error")
+        flash("Рассмотреть можно только новую заявку.", "error")
         return redirect(url_for("requests_page"))
 
     if request.method == "POST":
@@ -1206,9 +1731,10 @@ def approve_request(request_id):
         approved_by = request.form.get("approved_by", "").strip()
         approval_comment = request.form.get("approval_comment", "").strip()
         approved_liters = request.form.get("approved_liters", "").strip()
+        fuel_supplier = request.form.get("fuel_supplier", "").strip()
 
         if not approved_by:
-            flash("Укажите, кто принимает решение.", "error")
+            flash("Укажите, кто рассматривает заявку.", "error")
             return redirect(url_for("approve_request", request_id=request_id))
 
         if action == "reject":
@@ -1224,8 +1750,8 @@ def approve_request(request_id):
             return redirect(url_for("requests_page"))
 
         if action == "approve":
-            if not approved_liters:
-                flash("Укажите разрешенное количество литров.", "error")
+            if not approved_liters or not fuel_supplier:
+                flash("Укажите разрешенные литры и кто обеспечивает дизель.", "error")
                 return redirect(url_for("approve_request", request_id=request_id))
 
             try:
@@ -1241,64 +1767,61 @@ def approve_request(request_id):
                 UPDATE fuel_requests
                 SET status='approved',
                     approved_liters=%s,
+                    fuel_supplier=%s,
                     approved_by=%s,
                     approval_comment=%s,
                     approved_at=CURRENT_TIMESTAMP
                 WHERE id=%s
-            """, (approved_liters_value, approved_by, approval_comment, request_id))
+            """, (approved_liters_value, fuel_supplier, approved_by, approval_comment, request_id))
 
             flash("Заявка разрешена.", "success")
             return redirect(url_for("requests_page"))
 
-        flash("Неизвестное действие.", "error")
-        return redirect(url_for("approve_request", request_id=request_id))
-
     content = f"""
     <div class="card">
-        <h3>Разрешение заявки №{r['id']}</h3>
-        <p><b>Компания:</b> {r['company_name'] or ''}</p>
+        <h3>Рассмотрение заявки №{r['id']}</h3>
+        <p><b>Компания-заявитель:</b> {r['requester_company_name'] or ''}</p>
+        <p><b>Ответственное лицо:</b> {r['requested_by'] or ''}</p>
         <p><b>Объект:</b> {r['object_name'] or ''}</p>
+        <p><b>Проект:</b> {r['project_name'] or ''}</p>
         <p><b>Транспорт:</b> {(r['brand'] or '')} / {(r['vehicle_type'] or '')} / {(r['plate_number'] or '')}</p>
         <p><b>Запрошено литров:</b> {r['requested_liters']}</p>
-        <p><b>Заявитель:</b> {r['requested_by'] or ''}</p>
-        <p><b>Комментарий:</b> {r['request_comment'] or ''}</p>
-
         <form method="POST">
-            <input type="text" name="approved_by" placeholder="Кто разрешает / отклоняет" required>
+            <input type="text" name="approved_by" placeholder="Кто рассматривает / разрешает" value="{current_user()['full_name']}" required>
             <input type="number" step="0.01" name="approved_liters" placeholder="Разрешено литров">
+            <input type="text" name="fuel_supplier" placeholder="Кто обеспечивает дизель">
             <textarea name="approval_comment" placeholder="Комментарий руководителя"></textarea>
-
             <button type="submit" name="action" value="approve">Разрешить заявку</button>
-            <button type="submit" name="action" value="reject" style="background:#dc2626;">Отклонить заявку</button>
+            <button class="btn-red" type="submit" name="action" value="reject">Отклонить заявку</button>
         </form>
-
         <br>
         <a class="btn btn-back" href="{url_for('requests_page')}">Назад</a>
     </div>
     """
-    return render_page(f"Разрешение заявки №{request_id}", content)
+    return render_page(f"Рассмотрение заявки №{request_id}", content)
 
 
 # =========================
-# FUEL REQUEST
+# FUEL
 # =========================
 @app.route("/requests/fuel/<int:request_id>", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "fueler")
 def fuel_request(request_id):
     r = fetch_one("""
         SELECT
             fr.*,
-            c.name AS company_name,
+            rc.name AS requester_company_name,
             o.name AS object_name,
             v.brand,
             v.vehicle_type,
             v.plate_number
         FROM fuel_requests fr
-        LEFT JOIN companies c ON fr.company_id = c.id
+        LEFT JOIN companies rc ON fr.requester_company_id = rc.id
         LEFT JOIN objects o ON fr.object_id = o.id
         LEFT JOIN vehicles v ON fr.vehicle_id = v.id
         WHERE fr.id = %s
     """, (request_id,))
-
     if not r:
         flash("Заявка не найдена.", "error")
         return redirect(url_for("requests_page"))
@@ -1345,7 +1868,6 @@ def fuel_request(request_id):
             WHERE id=%s
         """, (actual_liters_value, speedometer_value, fueler_name, fueling_comment, request_id))
 
-        # optional log into old journal
         execute_query("""
             INSERT INTO fuel_transactions (
                 vehicle_id, object_id, entry_type, liters, speedometer, entered_by, comment
@@ -1367,20 +1889,19 @@ def fuel_request(request_id):
     content = f"""
     <div class="card">
         <h3>Заправка по заявке №{r['id']}</h3>
-        <p><b>Компания:</b> {r['company_name'] or ''}</p>
+        <p><b>Компания-заявитель:</b> {r['requester_company_name'] or ''}</p>
         <p><b>Объект:</b> {r['object_name'] or ''}</p>
+        <p><b>Проект:</b> {r['project_name'] or ''}</p>
         <p><b>Транспорт:</b> {(r['brand'] or '')} / {(r['vehicle_type'] or '')} / {(r['plate_number'] or '')}</p>
         <p><b>Разрешено литров:</b> {r['approved_liters'] if r['approved_liters'] is not None else ''}</p>
-        <p><b>Кто разрешил:</b> {r['approved_by'] or ''}</p>
-
+        <p><b>Дизель обеспечивает:</b> {r['fuel_supplier'] or ''}</p>
         <form method="POST">
             <input type="number" step="0.01" name="actual_liters" placeholder="Фактически заправлено литров" required>
             <input type="number" name="speedometer" placeholder="Спидометр">
-            <input type="text" name="fueler_name" placeholder="Заправщик" required>
+            <input type="text" name="fueler_name" placeholder="Заправщик" value="{current_user()['full_name']}" required>
             <textarea name="fueling_comment" placeholder="Комментарий заправщика"></textarea>
             <button type="submit">Сохранить заправку</button>
         </form>
-
         <br>
         <a class="btn btn-back" href="{url_for('requests_page')}">Назад</a>
     </div>
@@ -1389,25 +1910,26 @@ def fuel_request(request_id):
 
 
 # =========================
-# CHECK REQUEST
+# CHECK
 # =========================
 @app.route("/requests/check/<int:request_id>", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "controller")
 def check_request(request_id):
     r = fetch_one("""
         SELECT
             fr.*,
-            c.name AS company_name,
+            rc.name AS requester_company_name,
             o.name AS object_name,
             v.brand,
             v.vehicle_type,
             v.plate_number
         FROM fuel_requests fr
-        LEFT JOIN companies c ON fr.company_id = c.id
+        LEFT JOIN companies rc ON fr.requester_company_id = rc.id
         LEFT JOIN objects o ON fr.object_id = o.id
         LEFT JOIN vehicles v ON fr.vehicle_id = v.id
         WHERE fr.id = %s
     """, (request_id,))
-
     if not r:
         flash("Заявка не найдена.", "error")
         return redirect(url_for("requests_page"))
@@ -1439,21 +1961,20 @@ def check_request(request_id):
     content = f"""
     <div class="card">
         <h3>Проверка заявки №{r['id']}</h3>
-        <p><b>Компания:</b> {r['company_name'] or ''}</p>
+        <p><b>Компания-заявитель:</b> {r['requester_company_name'] or ''}</p>
         <p><b>Объект:</b> {r['object_name'] or ''}</p>
+        <p><b>Проект:</b> {r['project_name'] or ''}</p>
         <p><b>Транспорт:</b> {(r['brand'] or '')} / {(r['vehicle_type'] or '')} / {(r['plate_number'] or '')}</p>
         <p><b>Запрошено:</b> {r['requested_liters']}</p>
         <p><b>Разрешено:</b> {r['approved_liters'] if r['approved_liters'] is not None else ''}</p>
         <p><b>Фактически заправлено:</b> {r['actual_liters'] if r['actual_liters'] is not None else ''}</p>
+        <p><b>Дизель обеспечивает:</b> {r['fuel_supplier'] or ''}</p>
         <p><b>Спидометр:</b> {r['speedometer'] if r['speedometer'] is not None else ''}</p>
-        <p><b>Заправщик:</b> {r['fueler_name'] or ''}</p>
-
         <form method="POST">
-            <input type="text" name="controller_name" placeholder="Контролер" required>
+            <input type="text" name="controller_name" placeholder="Контролер" value="{current_user()['full_name']}" required>
             <textarea name="control_comment" placeholder="Комментарий контролера"></textarea>
             <button type="submit">Завершить проверку</button>
         </form>
-
         <br>
         <a class="btn btn-back" href="{url_for('requests_page')}">Назад</a>
     </div>
@@ -1465,8 +1986,11 @@ def check_request(request_id):
 # JOURNAL
 # =========================
 @app.route("/transactions")
+@login_required
 def transactions_page():
-    transactions = fetch_all("""
+    user = current_user()
+
+    query = """
         SELECT
             ft.id,
             ft.entry_type,
@@ -1482,8 +2006,18 @@ def transactions_page():
         FROM fuel_transactions ft
         LEFT JOIN vehicles v ON ft.vehicle_id = v.id
         LEFT JOIN objects o ON ft.object_id = o.id
-        ORDER BY ft.id DESC
-    """)
+    """
+    params = ()
+
+    if user["role"] != "admin" and user["company_id"]:
+        query += """
+            WHERE o.company_id = %s
+        """
+        params = (user["company_id"],)
+
+    query += " ORDER BY ft.id DESC "
+
+    transactions = fetch_all(query, params)
 
     rows = ""
     for t in transactions:
@@ -1500,7 +2034,7 @@ def transactions_page():
             <td>{t['comment'] or ''}</td>
             <td>{t['created_at']}</td>
             <td>
-                <a class="btn btn-delete" href="/transactions/delete/{t['id']}" onclick="return confirm('Удалить запись?')">Удалить</a>
+                {"<a class='btn btn-delete' href='/transactions/delete/" + str(t["id"]) + "' onclick=\"return confirm('Удалить запись?')\">Удалить</a>" if user["role"] == "admin" else ""}
             </td>
         </tr>
         """
@@ -1529,6 +2063,8 @@ def transactions_page():
 
 
 @app.route("/transactions/delete/<int:tx_id>")
+@login_required
+@role_required("admin")
 def delete_transaction(tx_id):
     execute_query("DELETE FROM fuel_transactions WHERE id=%s", (tx_id,))
     flash("Запись удалена.", "success")
