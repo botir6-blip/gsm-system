@@ -1800,6 +1800,13 @@ def approve_request(request_id):
             flash("Заявка разрешена.", "success")
             return redirect(url_for("requests_page"))
 
+    companies = fetch_all("SELECT * FROM companies ORDER BY name")
+
+    company_options = "".join([
+        f"<option value='{c['name']}'>{c['name']}</option>"
+        for c in companies
+    ])    
+
     content = f"""
     <div class="card">
         <h3>Рассмотрение заявки №{r['id']}</h3>
@@ -1812,7 +1819,10 @@ def approve_request(request_id):
         <form method="POST">
             <input type="text" name="approved_by" placeholder="Кто рассматривает / разрешает" value="{current_user()['full_name']}" required>
             <input type="number" step="0.01" name="approved_liters" placeholder="Разрешено литров">
-            <input type="text" name="fuel_supplier" placeholder="За кем числится топливо">
+            <select name="fuel_supplier" required>
+                <option value="">За кем числится топливо</option>
+                {company_options}
+            </select>
             <textarea name="approval_comment" placeholder="Комментарий руководителя"></textarea>
             <button type="submit" name="action" value="approve">Разрешить заявку</button>
             <button class="btn-red" type="submit" name="action" value="reject">Отклонить заявку</button>
