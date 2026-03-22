@@ -8,6 +8,8 @@ app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+init_db()   # 👈 МАНА ШУНИ ҚЎШИНГ
+
 
 # =========================
 # DATABASE
