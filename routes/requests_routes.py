@@ -38,34 +38,45 @@ def is_request_initiator():
 
 
 def can_create_request():
-    return current_role() in ["Администратор", "Инициатор заявки"]
+    return is_admin() or is_request_initiator()
+
+
+def normalize_approval_type(value):
+    v = (value or "").strip().lower()
+    if v == "external":
+        return "external"
+    return "internal"
 
 
 def can_see_request_row(row):
     if is_admin():
         return True
 
+    approval_type = normalize_approval_type(row.get("approval_type"))
+
     if is_external_approver():
-        return (row.get("approval_type") or "") == "external"
+        return approval_type == "external"
 
     if is_internal_approver():
-        return (row.get("approval_type") or "internal") != "external"
+        return approval_type == "internal"
 
     return True
 
 
 def can_approve_request(row):
-    if row.get("status") != "new":
+    if (row.get("status") or "") != "new":
         return False
 
     if is_admin():
         return True
 
+    approval_type = normalize_approval_type(row.get("approval_type"))
+
     if is_external_approver():
-        return (row.get("approval_type") or "") == "external"
+        return approval_type == "external"
 
     if is_internal_approver():
-        return (row.get("approval_type") or "internal") != "external"
+        return approval_type == "internal"
 
     return False
 
@@ -119,6 +130,8 @@ def meter_unit(value):
 @requests_bp.route("/requests")
 @login_required
 def requests_page():
+    can_create = can_create_request()
+
     rows = fetch_all("""
         SELECT
             r.id,
@@ -157,7 +170,7 @@ def requests_page():
         <h2 style='margin:0;'>Заявки</h2>
     """
 
-    if can_create_request():
+    if can_create:
         content += """
         <a href='/requests/new' style='text-decoration:none; padding:8px 12px; border:1px solid #ccc; border-radius:8px;'>
             ➕ Новая заявка
@@ -192,11 +205,13 @@ def requests_page():
             if r["base_consumption"]:
                 norm_text = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
 
-            approval_type_label = "Сторонний" if (r["approval_type"] or "") == "external" else "Внутренний"
+            approval_type_label = "Сторонний" if normalize_approval_type(r["approval_type"]) == "external" else "Внутренний"
 
             approve_btn = ""
             if can_approve_request(r):
-                approve_btn = f"<a href='/requests/{r['id']}' style='margin-left:8px;'>Согласовать</a>"
+                approve_btn = f"""
+                    <a href='/requests/{r["id"]}' style='margin-left:8px;'>Согласовать</a>
+                """
 
             row_bg = "background:#e8f5e9;" if r["status"] == "checked" else ""
 
@@ -246,7 +261,7 @@ def new_request():
         tank_balance = request.form.get("tank_balance") or ""
         route_work = request.form.get("route_work") or ""
         comment = request.form.get("comment") or ""
-        approval_type = request.form.get("approval_type") or "internal"
+        approval_type = normalize_approval_type(request.form.get("approval_type"))
 
         obj = fetch_one("""
             SELECT id, name
@@ -494,7 +509,7 @@ def request_detail(request_id):
     if r["base_consumption"]:
         base_norm = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
 
-    approval_type_label = "Сторонний" if (r["approval_type"] or "") == "external" else "Внутренний"
+    approval_type_label = "Сторонний" if normalize_approval_type(r["approval_type"]) == "external" else "Внутренний"
 
     content = f"""
     <div style='max-width:820px; margin:0 auto;'>
@@ -526,6 +541,27 @@ def request_detail(request_id):
                 <tr><td style='padding:6px;'><b>Тип согласования</b></td><td style='padding:6px;'>{approval_type_label}</td></tr>
                 <tr><td style='padding:6px;'><b>Проект</b></td><td style='padding:6px;'>{r['project_name'] or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Комментарий</b></td><td style='padding:6px;'>{r['request_comment'] or '—'}</td></tr>
+            </table>
+        </div>
+
+        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
+            <h3 style='margin-top:0;'>Ход согласования</h3>
+            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
+                <tr><td style='padding:6px; width:260px;'><b>Заявку подал</b></td><td style='padding:6px;'>{r['requested_by'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Разрешил</b></td><td style='padding:6px;'>{r['approved_by'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Заправил</b></td><td style='padding:6px;'>{r['fueler_name'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Подтверждение водителя</b></td><td style='padding:6px;'>{"—" if "driver_name" not in r.keys() else (r["driver_name"] or "—")}</td></tr>
+                <tr><td style='padding:6px;'><b>Проверил</b></td><td style='padding:6px;'>{r['controller_name'] or '—'}</td></tr>
+            </table>
+        </div>
+
+        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
+            <h3 style='margin-top:0;'>Даты</h3>
+            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
+                <tr><td style='padding:6px; width:260px;'><b>Создана</b></td><td style='padding:6px;'>{r['created_at'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Разрешена</b></td><td style='padding:6px;'>{r['approved_at'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Заправлена</b></td><td style='padding:6px;'>{r['fueled_at'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Проверена</b></td><td style='padding:6px;'>{r['checked_at'] or '—'}</td></tr>
             </table>
         </div>
     """
@@ -560,8 +596,8 @@ def request_detail(request_id):
                 <div style='margin-bottom:10px;'>
                     <label><b>Тип согласования:</b></label><br>
                     <select name='approval_type' style='width:100%; padding:8px;'>
-                        <option value='internal' {"selected" if r["approval_type"] == "internal" else ""}>Внутреннее</option>
-                        <option value='external' {"selected" if r["approval_type"] == "external" else ""}>Внешнее</option>
+                        <option value='internal' {"selected" if normalize_approval_type(r["approval_type"]) == "internal" else ""}>Внутреннее</option>
+                        <option value='external' {"selected" if normalize_approval_type(r["approval_type"]) == "external" else ""}>Внешнее</option>
                     </select>
                 </div>
 
@@ -592,6 +628,7 @@ def request_detail(request_id):
         """
 
     content += "</div>"
+
     return render_page(f"Заявка №{request_id}", content)
 
 
@@ -610,10 +647,13 @@ def request_decision(request_id):
     if not can_approve_request(req):
         return render_page("Доступ запрещен", "<p>Сизда бу заявкани согласовать қилиш ҳуқуқи йўқ.</p>")
 
+    if req["status"] != "new":
+        return redirect(f"/requests/{request_id}")
+
     decision = request.form.get("decision")
     approved_liters = request.form.get("approved_liters") or req["requested_liters"]
     fuel_supplier = request.form.get("fuel_supplier") or ""
-    approval_type = request.form.get("approval_type") or (req["approval_type"] or "internal")
+    approval_type = normalize_approval_type(request.form.get("approval_type") or req["approval_type"])
     approval_comment = request.form.get("approval_comment") or ""
     approver = current_user_name()
 
