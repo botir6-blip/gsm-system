@@ -17,6 +17,59 @@ def current_user_name():
     )
 
 
+def current_role():
+    return (session.get("role") or "").strip()
+
+
+def is_admin():
+    return current_role() == "Администратор"
+
+
+def is_internal_approver():
+    return current_role() == "Согласующий по внутреннему транспорту"
+
+
+def is_external_approver():
+    return current_role() == "Согласующий по стороннему транспорту"
+
+
+def is_request_initiator():
+    return current_role() == "Инициатор заявки"
+
+
+def can_create_request():
+    return current_role() in ["Администратор", "Инициатор заявки"]
+
+
+def can_see_request_row(row):
+    if is_admin():
+        return True
+
+    if is_external_approver():
+        return (row.get("approval_type") or "") == "external"
+
+    if is_internal_approver():
+        return (row.get("approval_type") or "internal") != "external"
+
+    return True
+
+
+def can_approve_request(row):
+    if row.get("status") != "new":
+        return False
+
+    if is_admin():
+        return True
+
+    if is_external_approver():
+        return (row.get("approval_type") or "") == "external"
+
+    if is_internal_approver():
+        return (row.get("approval_type") or "internal") != "external"
+
+    return False
+
+
 def status_label(status):
     if status == "new":
         return "Новая"
@@ -66,9 +119,6 @@ def meter_unit(value):
 @requests_bp.route("/requests")
 @login_required
 def requests_page():
-    user_role = session.get("role", "")
-    can_create_request = user_role in ["admin", "dispatcher", "operator", "master"]
-
     rows = fetch_all("""
         SELECT
             r.id,
@@ -90,7 +140,8 @@ def requests_page():
             r.status,
             r.created_at,
             r.project_name,
-            r.fuel_supplier
+            r.fuel_supplier,
+            r.approval_type
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
@@ -99,12 +150,14 @@ def requests_page():
             r.id DESC
     """)
 
+    visible_rows = [r for r in rows if can_see_request_row(r)]
+
     content = """
     <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:10px;'>
         <h2 style='margin:0;'>Заявки</h2>
     """
 
-    if can_create_request:
+    if can_create_request():
         content += """
         <a href='/requests/new' style='text-decoration:none; padding:8px 12px; border:1px solid #ccc; border-radius:8px;'>
             ➕ Новая заявка
@@ -113,7 +166,7 @@ def requests_page():
 
     content += "</div>"
 
-    if rows:
+    if visible_rows:
         content += """
         <div style='overflow-x:auto;'>
         <table border='1' cellpadding='8' cellspacing='0'
@@ -126,23 +179,24 @@ def requests_page():
                 <th>Норма</th>
                 <th>Запрос</th>
                 <th>За чей счет</th>
+                <th>Тип</th>
                 <th>Подал</th>
                 <th>Действия</th>
             </tr>
         """
 
-        for r in rows:
+        for r in visible_rows:
             transport = f"{r['plate_number'] or ''} {r['vehicle_name'] or ''}".strip()
             fact_text = f" / факт {r['actual_liters']} л" if r["actual_liters"] else ""
             norm_text = ""
             if r["base_consumption"]:
                 norm_text = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
 
+            approval_type_label = "Сторонний" if (r["approval_type"] or "") == "external" else "Внутренний"
+
             approve_btn = ""
-            if r["status"] == "new":
-                approve_btn = f"""
-                    <a href='/requests/{r["id"]}' style='margin-left:8px;'>Согласовать</a>
-                """
+            if can_approve_request(r):
+                approve_btn = f"<a href='/requests/{r['id']}' style='margin-left:8px;'>Согласовать</a>"
 
             row_bg = "background:#e8f5e9;" if r["status"] == "checked" else ""
 
@@ -159,6 +213,7 @@ def requests_page():
                 <td>{norm_text or '—'}</td>
                 <td>{r['requested_liters'] or '—'} л{fact_text}</td>
                 <td>{r['fuel_supplier'] or '—'}</td>
+                <td>{approval_type_label}</td>
                 <td>{r['requested_by'] or '—'}</td>
                 <td style='white-space:nowrap;'>
                     <a href='/requests/{r["id"]}'>Подробнее</a>
@@ -173,9 +228,13 @@ def requests_page():
 
     return render_page("Заявки", content)
 
+
 @requests_bp.route("/requests/new", methods=["GET", "POST"])
 @login_required
 def new_request():
+    if not can_create_request():
+        return render_page("Доступ запрещен", "<p>Сизга янги заявка яратиш рухсат этилмаган.</p>")
+
     if request.method == "POST":
         object_name = (request.form.get("object_name") or "").strip()
         vehicle_label = (request.form.get("vehicle_label") or "").strip()
@@ -187,6 +246,7 @@ def new_request():
         tank_balance = request.form.get("tank_balance") or ""
         route_work = request.form.get("route_work") or ""
         comment = request.form.get("comment") or ""
+        approval_type = request.form.get("approval_type") or "internal"
 
         obj = fetch_one("""
             SELECT id, name
@@ -224,9 +284,9 @@ def new_request():
                 "<p>Транспорт рўйхатдан танланмади. Орқага қайтиб, транспортни қидирувдан танланг.</p>"
             )
 
-        full_comment = f"""Остаток в баке: {tank_balance}
+        full_comment = f\"\"\"Остаток в баке: {tank_balance}
 Маршрут / объем работ: {route_work}
-Комментарий: {comment}"""
+Комментарий: {comment}\"\"\"
 
         execute_query("""
             INSERT INTO fuel_requests (
@@ -237,9 +297,10 @@ def new_request():
                 project_name,
                 fuel_supplier,
                 request_comment,
+                approval_type,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'new')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'new')
         """, (
             obj["id"],
             veh["id"],
@@ -247,7 +308,8 @@ def new_request():
             requested_by,
             project_name,
             fuel_supplier,
-            full_comment
+            full_comment,
+            approval_type
         ))
 
         return redirect("/requests")
@@ -263,12 +325,7 @@ def new_request():
             id,
             vehicle_name,
             vehicle_type,
-            plate_number,
-            meter_type,
-            base_consumption,
-            load_coeff_empty,
-            load_coeff_loaded,
-            load_coeff_heavy
+            plate_number
         FROM vehicles
         ORDER BY plate_number
     """)
@@ -334,27 +391,31 @@ def new_request():
                 </datalist>
             </div>
 
-            <div style='padding:10px; border:1px solid #ddd; border-radius:8px; background:#f9f9f9; font-size:14px;'>
-                <div><b>Эслатма:</b> Объект ва транспортни рўйхатдан танланг.</div>
+            <div>
+                <label><b>3. Тип согласования:</b></label><br>
+                <select name='approval_type' style='width:100%; padding:8px;' required>
+                    <option value='internal'>Внутренний транспорт</option>
+                    <option value='external'>Сторонний транспорт</option>
+                </select>
             </div>
 
             <div>
-                <label><b>3. Остаток в баке (л):</b></label><br>
+                <label><b>4. Остаток в баке (л):</b></label><br>
                 <input type='number' step='0.01' name='tank_balance' style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label><b>4. Запрашиваемое количество топлива (л):</b></label><br>
+                <label><b>5. Запрашиваемое количество топлива (л):</b></label><br>
                 <input type='number' step='0.01' name='requested_liters' required style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label><b>5. Маршрут / объем работ:</b></label><br>
+                <label><b>6. Маршрут / объем работ:</b></label><br>
                 <input type='text' name='route_work' style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label><b>6. Кто подает заявку:</b></label><br>
+                <label><b>7. Кто подает заявку:</b></label><br>
                 <select name='requested_by' required style='width:100%; padding:8px;'>
                     <option value=''>-- Выберите --</option>
     """
@@ -367,12 +428,12 @@ def new_request():
             </div>
 
             <div>
-                <label><b>7. Проект:</b></label><br>
+                <label><b>8. Проект:</b></label><br>
                 <input type='text' name='project_name' style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label><b>8. За чей счет топливо:</b></label><br>
+                <label><b>9. За чей счет топливо:</b></label><br>
                 <select name='fuel_supplier' style='width:100%; padding:8px;'>
                     <option value=''>-- Выберите --</option>
     """
@@ -385,7 +446,7 @@ def new_request():
             </div>
 
             <div>
-                <label><b>9. Комментарий:</b></label><br>
+                <label><b>10. Комментарий:</b></label><br>
                 <textarea name='comment' rows='4' style='width:100%; padding:8px;'></textarea>
             </div>
 
@@ -425,10 +486,15 @@ def request_detail(request_id):
     if not r:
         return render_page("Ошибка", "<p>Заявка не найдена.</p>")
 
+    if not can_see_request_row(r):
+        return render_page("Доступ запрещен", "<p>Сизда бу заявкани кўриш ҳуқуқи йўқ.</p>")
+
     transport = f"{r['plate_number'] or ''} {r['vehicle_name'] or ''}".strip()
     base_norm = "—"
     if r["base_consumption"]:
         base_norm = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
+
+    approval_type_label = "Сторонний" if (r["approval_type"] or "") == "external" else "Внутренний"
 
     content = f"""
     <div style='max-width:820px; margin:0 auto;'>
@@ -457,34 +523,14 @@ def request_detail(request_id):
                 <tr><td style='padding:6px;'><b>Разрешено</b></td><td style='padding:6px;'>{r['approved_liters'] or '—'} л</td></tr>
                 <tr><td style='padding:6px;'><b>Фактически отпущено</b></td><td style='padding:6px;'>{r['actual_liters'] or '—'} л</td></tr>
                 <tr><td style='padding:6px;'><b>За чей счет топливо</b></td><td style='padding:6px;'>{r['fuel_supplier'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Тип согласования</b></td><td style='padding:6px;'>{approval_type_label}</td></tr>
                 <tr><td style='padding:6px;'><b>Проект</b></td><td style='padding:6px;'>{r['project_name'] or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Комментарий</b></td><td style='padding:6px;'>{r['request_comment'] or '—'}</td></tr>
             </table>
         </div>
-
-        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
-            <h3 style='margin-top:0;'>Ход согласования</h3>
-            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
-                <tr><td style='padding:6px; width:260px;'><b>Заявку подал</b></td><td style='padding:6px;'>{r['requested_by'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Разрешил</b></td><td style='padding:6px;'>{r['approved_by'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Заправил</b></td><td style='padding:6px;'>{r['fueler_name'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Подтверждение водителя</b></td><td style='padding:6px;'>{"—" if "driver_name" not in r.keys() else (r["driver_name"] or "—")}</td></tr>
-                <tr><td style='padding:6px;'><b>Проверил</b></td><td style='padding:6px;'>{r['controller_name'] or '—'}</td></tr>
-            </table>
-        </div>
-
-        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
-            <h3 style='margin-top:0;'>Даты</h3>
-            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
-                <tr><td style='padding:6px; width:260px;'><b>Создана</b></td><td style='padding:6px;'>{r['created_at'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Разрешена</b></td><td style='padding:6px;'>{r['approved_at'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Заправлена</b></td><td style='padding:6px;'>{r['fueled_at'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Проверена</b></td><td style='padding:6px;'>{r['checked_at'] or '—'}</td></tr>
-            </table>
-        </div>
     """
 
-    if r["status"] == "new":
+    if can_approve_request(r):
         content += f"""
         <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
             <h3 style='margin-top:0;'>Согласование</h3>
@@ -546,7 +592,6 @@ def request_detail(request_id):
         """
 
     content += "</div>"
-
     return render_page(f"Заявка №{request_id}", content)
 
 
@@ -554,7 +599,7 @@ def request_detail(request_id):
 @login_required
 def request_decision(request_id):
     req = fetch_one("""
-        SELECT id, status, requested_liters
+        SELECT id, status, requested_liters, approval_type
         FROM fuel_requests
         WHERE id = %s
     """, (request_id,))
@@ -562,13 +607,13 @@ def request_decision(request_id):
     if not req:
         return render_page("Ошибка", "<p>Заявка не найдена.</p>")
 
-    if req["status"] != "new":
-        return redirect(f"/requests/{request_id}")
+    if not can_approve_request(req):
+        return render_page("Доступ запрещен", "<p>Сизда бу заявкани согласовать қилиш ҳуқуқи йўқ.</p>")
 
     decision = request.form.get("decision")
     approved_liters = request.form.get("approved_liters") or req["requested_liters"]
     fuel_supplier = request.form.get("fuel_supplier") or ""
-    approval_type = request.form.get("approval_type") or "internal"
+    approval_type = request.form.get("approval_type") or (req["approval_type"] or "internal")
     approval_comment = request.form.get("approval_comment") or ""
     approver = current_user_name()
 
