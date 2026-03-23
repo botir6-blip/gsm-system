@@ -8,12 +8,36 @@ def current_user():
     if not user_id:
         return None
 
-    return fetch_one("""
+    user = fetch_one("""
         SELECT u.*, c.name AS company_name
         FROM users u
         LEFT JOIN companies c ON u.company_id = c.id
         WHERE u.id = %s AND u.is_active = TRUE
     """, (user_id,))
+
+    if not user:
+        return None
+
+    role_value = user.get("role")
+    role_id = user.get("role_id")
+
+    # Агар role матн бўлса, шу ҳолича ишлатамиз
+    if role_value and not str(role_value).isdigit():
+        user["role"] = str(role_value).strip()
+        return user
+
+    # Агар role_id алоҳида сақланган бўлса, roles жадвалидан номини оламиз
+    lookup_role_id = role_id or role_value
+    if lookup_role_id:
+        role_row = fetch_one("""
+            SELECT name
+            FROM roles
+            WHERE id = %s
+        """, (lookup_role_id,))
+        if role_row and role_row.get("name"):
+            user["role"] = str(role_row["name"]).strip()
+
+    return user
 
 
 def login_required(fn):
