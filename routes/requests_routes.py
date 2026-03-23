@@ -2,6 +2,7 @@ from flask import Blueprint, request, redirect
 from auth import login_required
 from layout import render_page
 from db import fetch_all, execute_query
+import json
 
 requests_bp = Blueprint("requests_bp", __name__)
 
@@ -107,7 +108,16 @@ def new_request():
     """)
 
     vehicles = fetch_all("""
-        SELECT id, plate_number, brand, vehicle_type
+        SELECT
+            id,
+            vehicle_name,
+            vehicle_type,
+            plate_number,
+            meter_type,
+            base_consumption,
+            load_coeff_empty,
+            load_coeff_loaded,
+            load_coeff_heavy
         FROM vehicles
         ORDER BY plate_number
     """)
@@ -118,57 +128,92 @@ def new_request():
         ORDER BY full_name
     """)
 
-    content = """
-    <div style='max-width:650px; margin:0 auto;'>
-        <h2 style='margin-bottom:18px;'>Новая заявка</h2>
+    objects_js = json.dumps([
+        {
+            "id": o["id"],
+            "label": o["name"] or ""
+        }
+        for o in objects
+    ], ensure_ascii=False)
+
+    vehicles_js = json.dumps([
+        {
+            "id": v["id"],
+            "label": f"{v['plate_number'] or ''} | {v['vehicle_name'] or ''} | {v['vehicle_type'] or ''}",
+            "vehicle_name": v["vehicle_name"] or "",
+            "vehicle_type": v["vehicle_type"] or "",
+            "plate_number": v["plate_number"] or "",
+            "meter_type": v["meter_type"] or "",
+            "base_consumption": str(v["base_consumption"] or ""),
+            "load_coeff_empty": str(v["load_coeff_empty"] or ""),
+            "load_coeff_loaded": str(v["load_coeff_loaded"] or ""),
+            "load_coeff_heavy": str(v["load_coeff_heavy"] or "")
+        }
+        for v in vehicles
+    ], ensure_ascii=False)
+
+    content = f"""
+    <div style='max-width:760px; margin:0 auto;'>
+        <h2 style='margin-bottom:16px;'>Новая заявка</h2>
+
         <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
 
             <div>
-                <label>1. Объект заправки:</label><br>
-                <select name='object_id' required style='width:100%; padding:8px;'>
-                    <option value=''>-- Выберите --</option>
-    """
-
-    for o in objects:
-        content += f"<option value='{o['id']}'>{o['name']}</option>"
-
-    content += """
-                </select>
+                <label><b>1. Объект заправки:</b></label><br>
+                <input
+                    type='text'
+                    id='object_search'
+                    list='objects_list'
+                    placeholder='Начните вводить название объекта'
+                    autocomplete='off'
+                    style='width:100%; padding:8px;'
+                    required
+                >
+                <datalist id='objects_list'></datalist>
+                <input type='hidden' name='object_id' id='object_id' required>
             </div>
 
             <div>
-                <label>2. Транспорт:</label><br>
-                <select name='vehicle_id' required style='width:100%; padding:8px;'>
-                    <option value=''>-- Выберите --</option>
-    """
+                <label><b>2. Транспорт:</b></label><br>
+                <input
+                    type='text'
+                    id='vehicle_search'
+                    list='vehicles_list'
+                    placeholder='Начните вводить гос.номер, наименование или тип'
+                    autocomplete='off'
+                    style='width:100%; padding:8px;'
+                    required
+                >
+                <datalist id='vehicles_list'></datalist>
+                <input type='hidden' name='vehicle_id' id='vehicle_id' required>
+            </div>
 
-    for v in vehicles:
-        plate = v["plate_number"] or ""
-        brand = v["brand"] or ""
-        vtype = v["vehicle_type"] or ""
-        content += f"<option value='{v['id']}'>{plate} | {brand} | {vtype}</option>"
-
-    content += """
-                </select>
+            <div id='vehicle_info' style='padding:10px; border:1px solid #ddd; border-radius:8px; background:#f9f9f9; font-size:14px;'>
+                <div><b>Тип транспорта:</b> <span id='info_vehicle_type'>—</span></div>
+                <div><b>Тип учета:</b> <span id='info_meter_type'>—</span></div>
+                <div><b>Базовая норма:</b> <span id='info_base_consumption'>—</span></div>
+                <div><b>Коэффициент без груза:</b> <span id='info_empty'>—</span></div>
+                <div><b>Коэффициент с грузом:</b> <span id='info_loaded'>—</span></div>
+                <div><b>Коэффициент тяжелых условий:</b> <span id='info_heavy'>—</span></div>
             </div>
 
             <div>
-                <label>3. Остаток в баке (л):</label><br>
+                <label><b>3. Остаток в баке (л):</b></label><br>
                 <input type='number' step='0.01' name='tank_balance' style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label>4. Запрашиваемое количество топлива (л):</label><br>
+                <label><b>4. Запрашиваемое количество топлива (л):</b></label><br>
                 <input type='number' step='0.01' name='requested_liters' required style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label>5. Маршрут / объем работ:</label><br>
+                <label><b>5. Маршрут / объем работ:</b></label><br>
                 <input type='text' name='route_work' style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label>6. Кто подает заявку:</label><br>
+                <label><b>6. Кто подает заявку:</b></label><br>
                 <select name='requested_by' required style='width:100%; padding:8px;'>
                     <option value=''>-- Выберите --</option>
     """
@@ -181,12 +226,12 @@ def new_request():
             </div>
 
             <div>
-                <label>7. Проект:</label><br>
+                <label><b>7. Проект:</b></label><br>
                 <input type='text' name='project_name' style='width:100%; padding:8px;'>
             </div>
 
             <div>
-                <label>8. Комментарий:</label><br>
+                <label><b>8. Комментарий:</b></label><br>
                 <textarea name='comment' rows='4' style='width:100%; padding:8px;'></textarea>
             </div>
 
@@ -197,6 +242,75 @@ def new_request():
 
         </form>
     </div>
+
+    <script>
+        const objectsData = {objects_js};
+        const vehiclesData = {vehicles_js};
+
+        const objectSearch = document.getElementById('object_search');
+        const objectId = document.getElementById('object_id');
+        const objectsList = document.getElementById('objects_list');
+
+        const vehicleSearch = document.getElementById('vehicle_search');
+        const vehicleId = document.getElementById('vehicle_id');
+        const vehiclesList = document.getElementById('vehicles_list');
+
+        function fillDatalist(listEl, data) {{
+            listEl.innerHTML = '';
+            data.forEach(item => {{
+                const option = document.createElement('option');
+                option.value = item.label;
+                listEl.appendChild(option);
+            }});
+        }}
+
+        fillDatalist(objectsList, objectsData);
+        fillDatalist(vehiclesList, vehiclesData);
+
+        objectSearch.addEventListener('input', function() {{
+            const found = objectsData.find(item => item.label === this.value);
+            objectId.value = found ? found.id : '';
+        }});
+
+        function meterTypeLabel(value) {{
+            if (value === 'speedometer') return 'Спидометр';
+            if (value === 'motohours') return 'Моточасы';
+            return '—';
+        }}
+
+        function meterUnit(value) {{
+            if (value === 'speedometer') return 'л/100 км';
+            if (value === 'motohours') return 'л/моточас';
+            return '';
+        }}
+
+        function clearVehicleInfo() {{
+            document.getElementById('info_vehicle_type').textContent = '—';
+            document.getElementById('info_meter_type').textContent = '—';
+            document.getElementById('info_base_consumption').textContent = '—';
+            document.getElementById('info_empty').textContent = '—';
+            document.getElementById('info_loaded').textContent = '—';
+            document.getElementById('info_heavy').textContent = '—';
+        }}
+
+        vehicleSearch.addEventListener('input', function() {{
+            const found = vehiclesData.find(item => item.label === this.value);
+            vehicleId.value = found ? found.id : '';
+
+            if (!found) {{
+                clearVehicleInfo();
+                return;
+            }}
+
+            document.getElementById('info_vehicle_type').textContent = found.vehicle_type || '—';
+            document.getElementById('info_meter_type').textContent = meterTypeLabel(found.meter_type);
+            document.getElementById('info_base_consumption').textContent =
+                found.base_consumption ? (found.base_consumption + ' ' + meterUnit(found.meter_type)) : '—';
+            document.getElementById('info_empty').textContent = found.load_coeff_empty || '—';
+            document.getElementById('info_loaded').textContent = found.load_coeff_loaded || '—';
+            document.getElementById('info_heavy').textContent = found.load_coeff_heavy || '—';
+        }});
+    </script>
     """
 
     return render_page("Новая заявка", content)
