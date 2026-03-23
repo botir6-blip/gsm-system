@@ -38,9 +38,7 @@ BASE_HTML = """
             border-radius: 12px;
             font-size: 14px;
         }
-        h1, h2, h3 {
-            margin-top: 0;
-        }
+        h1, h2, h3 { margin-top: 0; }
         .menu {
             margin-bottom: 20px;
             display: flex;
@@ -57,9 +55,7 @@ BASE_HTML = """
             font-size: 14px;
             box-shadow: 0 4px 12px rgba(37,99,235,0.18);
         }
-        .menu a:hover {
-            background: #1d4ed8;
-        }
+        .menu a:hover { background: #1d4ed8; }
         .dashboard {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -95,10 +91,7 @@ BASE_HTML = """
             margin-bottom: 18px;
             box-shadow: 0 6px 16px rgba(31,41,55,0.05);
         }
-        form {
-            display: grid;
-            gap: 12px;
-        }
+        form { display: grid; gap: 12px; }
         input, select, textarea, button {
             padding: 12px;
             border-radius: 12px;
@@ -120,15 +113,11 @@ BASE_HTML = """
             font-weight: bold;
             box-shadow: 0 6px 16px rgba(22,163,74,0.2);
         }
-        button:hover {
-            background: #15803d;
-        }
+        button:hover { background: #15803d; }
         .btn-red {
             background: linear-gradient(135deg, #dc2626 0%, #c81e1e 100%) !important;
         }
-        .btn-red:hover {
-            background: #b91c1c !important;
-        }
+        .btn-red:hover { background: #b91c1c !important; }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -144,9 +133,7 @@ BASE_HTML = """
             text-align: left;
             vertical-align: top;
         }
-        th {
-            background: #eef4fb;
-        }
+        th { background: #eef4fb; }
         .flash {
             padding: 12px;
             border-radius: 12px;
@@ -259,7 +246,7 @@ def nav_menu():
         menu.append(f'<a href="{url_for("new_request_page")}">Новая заявка</a>')
 
     menu.append(f'<a href="{url_for("requests_page")}">Заявки</a>')
-    menu.append(f'<a href="{url_for("transactions.transactions_page")}">Журнал</a>')
+    menu.append(f'<a href="{url_for("transactions_page")}">Журнал</a>')
     menu.append(f'<a href="{url_for("logout")}">Выход</a>')
 
     return f'<div class="menu">{"".join(menu)}</div>'
