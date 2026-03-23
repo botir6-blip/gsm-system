@@ -8,6 +8,23 @@ requests_bp = Blueprint("requests_bp", __name__)
 
 
 def current_user_name():
+    try:
+        user = current_user()
+        if user:
+            return (
+                user.get("full_name")
+                or user.get("username")
+                or user.get("login")
+                or user.get("user_name")
+                or session.get("full_name")
+                or session.get("username")
+                or session.get("login")
+                or session.get("user_name")
+                or "Пользователь"
+            )
+    except Exception:
+        pass
+
     return (
         session.get("full_name")
         or session.get("username")
@@ -22,34 +39,26 @@ def current_role():
         user = current_user()
         if user:
             for key in ["role", "role_name", "user_role", "position"]:
-                val = user.get(key)
-                if val:
-                    return str(val).strip()
-
-            role_id = user.get("role_id")
-            if role_id:
-                row = fetch_one("SELECT name FROM roles WHERE id = %s", (role_id,))
-                if row and row.get("name"):
-                    return str(row["name"]).strip()
+                value = user.get(key)
+                if value:
+                    return str(value).strip()
     except Exception:
         pass
 
-    for key in ["role", "role_name", "user_role"]:
-        val = session.get(key)
-        if val:
-            return str(val).strip()
-
-    role_id = session.get("role_id")
-    if role_id:
-        row = fetch_one("SELECT name FROM roles WHERE id = %s", (role_id,))
-        if row and row.get("name"):
-            return str(row["name"]).strip()
+    for key in ["role", "role_name", "user_role", "position"]:
+        value = session.get(key)
+        if value:
+            return str(value).strip()
 
     return ""
 
 
 def is_admin():
     return current_role() == "Администратор"
+
+
+def is_request_initiator():
+    return current_role() == "Инициатор заявки"
 
 
 def is_internal_approver():
@@ -60,16 +69,12 @@ def is_external_approver():
     return current_role() == "Согласующий по стороннему транспорту"
 
 
-def is_request_initiator():
-    return current_role() == "Инициатор заявки"
-
-
 def can_create_request():
     return is_admin() or is_request_initiator()
 
 
 def normalize_approval_type(value):
-    v = str(value or "").strip().lower()
+    v = (value or "").strip().lower()
     if v == "external":
         return "external"
     return "internal"
@@ -91,7 +96,7 @@ def can_see_request_row(row):
 
 
 def can_approve_request(row):
-    if str(row.get("status") or "") != "new":
+    if (row.get("status") or "") != "new":
         return False
 
     if is_admin():
@@ -230,11 +235,17 @@ def requests_page():
             if r["base_consumption"]:
                 norm_text = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
 
-            approval_type_label = "Сторонний" if normalize_approval_type(r["approval_type"]) == "external" else "Внутренний"
+            approval_type_label = (
+                "Сторонний"
+                if normalize_approval_type(r["approval_type"]) == "external"
+                else "Внутренний"
+            )
 
             approve_btn = ""
             if can_approve_request(r):
-                approve_btn = f"<a href='/requests/{r['id']}' style='margin-left:8px;'>Согласовать</a>"
+                approve_btn = f"""
+                    <a href='/requests/{r["id"]}' style='margin-left:8px;'>Согласовать</a>
+                """
 
             row_bg = "background:#e8f5e9;" if r["status"] == "checked" else ""
 
@@ -533,7 +544,11 @@ def request_detail(request_id):
     if r["base_consumption"]:
         base_norm = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
 
-    approval_type_label = "Сторонний" if normalize_approval_type(r["approval_type"]) == "external" else "Внутренний"
+    approval_type_label = (
+        "Сторонний"
+        if normalize_approval_type(r["approval_type"]) == "external"
+        else "Внутренний"
+    )
 
     content = f"""
     <div style='max-width:820px; margin:0 auto;'>
