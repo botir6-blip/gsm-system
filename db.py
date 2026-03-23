@@ -163,6 +163,7 @@ def init_db():
         fueling_comment TEXT,
         control_comment TEXT,
         status VARCHAR(30) NOT NULL DEFAULT 'new',
+        CREATE TABLE IF NOT EXISTS fuel_requests (
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         approved_at TIMESTAMP,
         fueled_at TIMESTAMP,
@@ -170,6 +171,18 @@ def init_db():
     )
     """)
 
+    if not column_exists(cur, "fuel_requests", "approval_type"):
+        cur.execute("""
+            ALTER TABLE fuel_requests
+            ADD COLUMN approval_type VARCHAR(20) NOT NULL DEFAULT 'internal'
+        """)
+
+    cur.execute("""
+        UPDATE fuel_requests
+        SET approval_type = 'internal'
+        WHERE approval_type IS NULL
+    """)
+    
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fuel_transactions (
         id SERIAL PRIMARY KEY,
