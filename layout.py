@@ -232,7 +232,7 @@ def nav_menu():
         </div>
         """
 
-    menu = [f'<a href="{url_for("index")}">Главная</a>']
+    menu = [f'<a href="{url_for("dashboard_bp.index")}">Главная</a>']
 
     if user["role"] == "admin":
         menu += [
