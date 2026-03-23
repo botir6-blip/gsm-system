@@ -60,6 +60,7 @@ def can_see_request_row(row):
     if is_internal_approver():
         return approval_type == "internal"
 
+    # Қолган ролларга заявкаларни кўриш мумкин
     return True
 
 
