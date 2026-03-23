@@ -163,7 +163,6 @@ def init_db():
         fueling_comment TEXT,
         control_comment TEXT,
         status VARCHAR(30) NOT NULL DEFAULT 'new',
-        CREATE TABLE IF NOT EXISTS fuel_requests (
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         approved_at TIMESTAMP,
         fueled_at TIMESTAMP,
