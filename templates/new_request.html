@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Новая заявка</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            color: #1f2937;
+        }
+
+        .page {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+
+        .card {
+            background: #ffffff;
+            border-radius: 14px;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+            padding: 18px;
+        }
+
+        .title {
+            margin: 0 0 6px 0;
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            margin: 0 0 18px 0;
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .flash-wrap {
+            margin-bottom: 14px;
+        }
+
+        .flash {
+            padding: 12px 14px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .flash.success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
+
+        .flash.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+
+        .flash.warning {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fcd34d;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group.full {
+            grid-column: 1 / -1;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #374151;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 12px 13px;
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            font-size: 15px;
+            outline: none;
+            background: #fff;
+            transition: 0.2s;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+        }
+
+        textarea {
+            min-height: 90px;
+            resize: vertical;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 5px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 18px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 11px 16px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+        }
+
+        .btn-secondary {
+            background: #e5e7eb;
+            color: #111827;
+        }
+
+        .btn-secondary:hover {
+            background: #d1d5db;
+        }
+
+        .info-box {
+            margin-top: 18px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1e3a8a;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 640px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .title {
+                font-size: 20px;
+            }
+
+            .card {
+                padding: 14px;
+            }
+
+            .actions {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="card">
+            <h1 class="title">Новая заявка</h1>
+            <p class="subtitle">Объект ва транспортни қидирув орқали танлаб, ёнилғи заявкасини киритинг.</p>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-wrap">
+                        {% for category, message in messages %}
+                            <div class="flash {{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <form method="POST">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="object_search">Объект</label>
+                        <input
+                            type="text"
+                            id="object_search"
+                            list="objects_list"
+                            placeholder="Объектни қидиринг..."
+                            autocomplete="off"
+                            required
+                        >
+                        <input type="hidden" id="object_id" name="object_id" required>
+                        <datalist id="objects_list">
+                            {% for obj in objects %}
+                                <option value="{{ obj.name }}" data-id="{{ obj.id }}"></option>
+                            {% endfor %}
+                        </datalist>
+                        <div class="hint">Объект номини ёза бошланг.</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="vehicle_search">Транспорт</label>
+                        <input
+                            type="text"
+                            id="vehicle_search"
+                            list="vehicles_list"
+                            placeholder="Транспортни қидиринг..."
+                            autocomplete="off"
+                            required
+                        >
+                        <input type="hidden" id="vehicle_id" name="vehicle_id" required>
+                        <datalist id="vehicles_list">
+                            {% for v in vehicles %}
+                                <option
+                                    value="{{ v.gos_number }} | {{ v.model }}{% if v.company_name %} | {{ v.company_name }}{% endif %}"
+                                    data-id="{{ v.id }}">
+                                </option>
+                            {% endfor %}
+                        </datalist>
+                        <div class="hint">Гос.номер ёки модел бўйича қидиринг.</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="liters">Сўралган миқдор (литр)</label>
+                        <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            id="liters"
+                            name="liters"
+                            placeholder="Масалан: 120"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="fuel_type">Ёнилғи тури</label>
+                        <select id="fuel_type" name="fuel_type" required>
+                            <option value="">Танланг</option>
+                            <option value="ДТ">ДТ</option>
+                            <option value="АИ-80">АИ-80</option>
+                            <option value="АИ-91">АИ-91</option>
+                            <option value="АИ-92">АИ-92</option>
+                            <option value="АИ-95">АИ-95</option>
+                            <option value="Газ">Газ</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="provider_company_id">Топливо кимнинг ҳисобидан</label>
+                        <select id="provider_company_id" name="provider_company_id" required>
+                            <option value="">Компанияни танланг</option>
+                            {% for company in companies %}
+                                <option value="{{ company.id }}">{{ company.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="project_name">Проект / иш тури</label>
+                        <input
+                            type="text"
+                            id="project_name"
+                            name="project_name"
+                            placeholder="Масалан: Enter project, Burg‘ulash, Tashish..."
+                        >
+                    </div>
+
+                    <div class="form-group full">
+                        <label for="comment">Изоҳ</label>
+                        <textarea
+                            id="comment"
+                            name="comment"
+                            placeholder="Қўшимча маълумот ёзинг..."
+                        ></textarea>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button type="submit" class="btn btn-primary">Сақлаш</button>
+                    <a href="{{ url_for('requests_bp.requests_list') }}" class="btn btn-secondary">Бекор қилиш</a>
+                </div>
+            </form>
+
+            <div class="info-box">
+                Эслатма: объект ва транспорт фақат рўйхатдан танланиши керак.
+                Агар қидирувдан танланмаса, форма сақланмайди.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function bindDatalist(inputId, listId, hiddenId) {
+            const input = document.getElementById(inputId);
+            const hidden = document.getElementById(hiddenId);
+            const options = document.querySelectorAll(`#${listId} option`);
+
+            function syncHiddenValue() {
+                hidden.value = "";
+                const currentValue = input.value.trim();
+
+                for (const option of options) {
+                    if (option.value.trim() === currentValue) {
+                        hidden.value = option.dataset.id;
+                        break;
+                    }
+                }
+            }
+
+            input.addEventListener("input", syncHiddenValue);
+            input.addEventListener("change", syncHiddenValue);
+            input.addEventListener("blur", syncHiddenValue);
+        }
+
+        bindDatalist("object_search", "objects_list", "object_id");
+        bindDatalist("vehicle_search", "vehicles_list", "vehicle_id");
+
+        document.querySelector("form").addEventListener("submit", function(e) {
+            const objectId = document.getElementById("object_id").value;
+            const vehicleId = document.getElementById("vehicle_id").value;
+
+            if (!objectId) {
+                e.preventDefault();
+                alert("Объектни рўйхатдан танланг.");
+                document.getElementById("object_search").focus();
+                return;
+            }
+
+            if (!vehicleId) {
+                e.preventDefault();
+                alert("Транспортни рўйхатдан танланг.");
+                document.getElementById("vehicle_search").focus();
+                return;
+            }
+        });
+    </script>
+</body>
+</html>
