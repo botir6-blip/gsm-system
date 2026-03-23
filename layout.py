@@ -1,4 +1,4 @@
-from flask import render_template_string, url_for
+from flask import render_template_string
 from auth import current_user
 
 BASE_HTML = """
@@ -226,28 +226,32 @@ BASE_HTML = """
 def nav_menu():
     user = current_user()
     if not user:
-        return f"""
+        return """
         <div class="menu">
-            <a href="{url_for('auth_bp.login')}">Вход</a>
+            <a href="/login">Вход</a>
         </div>
         """
 
-    menu = [f'<a href="{url_for("dashboard_bp.index")}">Главная</a>']
+    menu = ['<a href="/">Главная</a>']
 
     if user["role"] == "admin":
         menu += [
-            f'<a href="{url_for("companies_bp.companies_page")}">Компании</a>',
-            f'<a href="{url_for("objects_page")}">Объекты</a>',
-            f'<a href="{url_for("vehicles_page")}">Транспорт</a>',
-            f'<a href="{url_for("users_bp.users_page")}">Пользователи</a>',
+            '<a href="/companies">Компании</a>',
+            '<a href="/objects">Объекты</a>',
+            '<a href="/vehicles">Транспорт</a>',
+            '<a href="/users">Пользователи</a>',
         ]
 
     if user["role"] in ["admin", "requester"]:
-        menu.append(f'<a href="{url_for("new_request_page")}">Новая заявка</a>')
+        menu.append('<a href="/requests/new">Новая заявка</a>')
 
-    menu.append(f'<a href="{url_for("requests_page")}">Заявки</a>')
-    menu.append(f'<a href="{url_for("transactions_page")}">Журнал</a>')
-    menu.append(f'<a href="{url_for("auth_bp.logout")}">Выход</a>')
+    if user["role"] in ["admin", "requester", "internal_approver", "external_approver", "fueler", "controller"]:
+        menu.append('<a href="/requests">Заявки</a>')
+
+    if user["role"] in ["admin", "requester", "internal_approver", "external_approver", "fueler", "controller", "ats_operator"]:
+        menu.append('<a href="/transactions">Журнал</a>')
+
+    menu.append('<a href="/logout">Выход</a>')
 
     return f'<div class="menu">{"".join(menu)}</div>'
 
