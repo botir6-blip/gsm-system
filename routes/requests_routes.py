@@ -1,6 +1,6 @@
 import json
 from flask import Blueprint, request, redirect, session
-from auth import login_required
+from auth import login_required, current_user
 from layout import render_page
 from db import fetch_all, fetch_one, execute_query
 
@@ -18,10 +18,34 @@ def current_user_name():
 
 
 def current_role():
-    role = session.get("role")
-    if role is None:
-        return ""
-    return str(role).strip()
+    try:
+        user = current_user()
+        if user:
+            for key in ["role", "role_name", "user_role", "position"]:
+                val = user.get(key)
+                if val:
+                    return str(val).strip()
+
+            role_id = user.get("role_id")
+            if role_id:
+                row = fetch_one("SELECT name FROM roles WHERE id = %s", (role_id,))
+                if row and row.get("name"):
+                    return str(row["name"]).strip()
+    except Exception:
+        pass
+
+    for key in ["role", "role_name", "user_role"]:
+        val = session.get(key)
+        if val:
+            return str(val).strip()
+
+    role_id = session.get("role_id")
+    if role_id:
+        row = fetch_one("SELECT name FROM roles WHERE id = %s", (role_id,))
+        if row and row.get("name"):
+            return str(row["name"]).strip()
+
+    return ""
 
 
 def is_admin():
