@@ -173,13 +173,13 @@ def requests_page():
 
     return render_page("Заявки", content)
 
-
 @requests_bp.route("/requests/new", methods=["GET", "POST"])
 @login_required
 def new_request():
     if request.method == "POST":
-        object_id = request.form.get("object_id") or None
-        vehicle_id = request.form.get("vehicle_id") or None
+        object_name = (request.form.get("object_name") or "").strip()
+        vehicle_label = (request.form.get("vehicle_label") or "").strip()
+
         requested_liters = request.form.get("requested_liters") or 0
         requested_by = request.form.get("requested_by") or ""
         project_name = request.form.get("project_name") or ""
@@ -188,10 +188,40 @@ def new_request():
         route_work = request.form.get("route_work") or ""
         comment = request.form.get("comment") or ""
 
-        if not object_id or not vehicle_id:
+        obj = fetch_one("""
+            SELECT id, name
+            FROM objects
+            WHERE name = %s
+            LIMIT 1
+        """, (object_name,))
+
+        veh = fetch_one("""
+            SELECT
+                id,
+                vehicle_name,
+                vehicle_type,
+                plate_number
+            FROM vehicles
+            WHERE CONCAT(
+                COALESCE(plate_number, ''),
+                ' | ',
+                COALESCE(vehicle_name, ''),
+                ' | ',
+                COALESCE(vehicle_type, '')
+            ) = %s
+            LIMIT 1
+        """, (vehicle_label,))
+
+        if not obj:
             return render_page(
                 "Ошибка",
-                "<p>Объект ва транспорт рўйхатдан танланиши шарт. Орқага қайтиб, қидирув рўйхатидан танланг.</p>"
+                "<p>Объект рўйхатдан танланмади. Орқага қайтиб, объектни қидирувдан танланг.</p>"
+            )
+
+        if not veh:
+            return render_page(
+                "Ошибка",
+                "<p>Транспорт рўйхатдан танланмади. Орқага қайтиб, транспортни қидирувдан танланг.</p>"
             )
 
         full_comment = f"""Остаток в баке: {tank_balance}
@@ -211,8 +241,8 @@ def new_request():
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, 'new')
         """, (
-            object_id,
-            vehicle_id,
+            obj["id"],
+            veh["id"],
             requested_liters,
             requested_by,
             project_name,
@@ -255,68 +285,57 @@ def new_request():
         ORDER BY name
     """)
 
-    objects_js = json.dumps([
-        {"id": o["id"], "label": o["name"] or ""}
-        for o in objects
-    ], ensure_ascii=False)
-
-    vehicles_js = json.dumps([
-        {
-            "id": v["id"],
-            "label": f"{v['plate_number'] or ''} | {v['vehicle_name'] or ''} | {v['vehicle_type'] or ''}",
-            "vehicle_name": v["vehicle_name"] or "",
-            "vehicle_type": v["vehicle_type"] or "",
-            "plate_number": v["plate_number"] or "",
-            "meter_type": v["meter_type"] or "",
-            "base_consumption": str(v["base_consumption"] or ""),
-            "load_coeff_empty": str(v["load_coeff_empty"] or ""),
-            "load_coeff_loaded": str(v["load_coeff_loaded"] or ""),
-            "load_coeff_heavy": str(v["load_coeff_heavy"] or "")
-        }
-        for v in vehicles
-    ], ensure_ascii=False)
-
-    content = f"""
+    content = """
     <div style='max-width:760px; margin:0 auto;'>
         <h2 style='margin-bottom:16px;'>Новая заявка</h2>
 
-        <form method='post' id='new_request_form' style='display:flex; flex-direction:column; gap:12px;'>
+        <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
 
-            <div style='position:relative;'>
+            <div>
                 <label><b>1. Объект заправки:</b></label><br>
                 <input
                     type='text'
-                    id='object_search'
+                    name='object_name'
+                    list='objects_list'
                     placeholder='Начните вводить название объекта'
                     autocomplete='off'
                     style='width:100%; padding:8px;'
                     required
                 >
-                <input type='hidden' name='object_id' id='object_id' required>
-                <div id='object_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:180px; overflow-y:auto; z-index:1000; border-radius:8px;'></div>
+                <datalist id='objects_list'>
+    """
+
+    for o in objects:
+        content += f"<option value='{o['name']}'></option>"
+
+    content += """
+                </datalist>
             </div>
 
-            <div style='position:relative;'>
+            <div>
                 <label><b>2. Транспорт:</b></label><br>
                 <input
                     type='text'
-                    id='vehicle_search'
+                    name='vehicle_label'
+                    list='vehicles_list'
                     placeholder='Начните вводить гос.номер, транспорт или тип'
                     autocomplete='off'
                     style='width:100%; padding:8px;'
                     required
                 >
-                <input type='hidden' name='vehicle_id' id='vehicle_id' required>
-                <div id='vehicle_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:220px; overflow-y:auto; z-index:1000; border-radius:8px;'></div>
+                <datalist id='vehicles_list'>
+    """
+
+    for v in vehicles:
+        label = f"{v['plate_number'] or ''} | {v['vehicle_name'] or ''} | {v['vehicle_type'] or ''}"
+        content += f"<option value='{label}'></option>"
+
+    content += """
+                </datalist>
             </div>
 
-            <div id='vehicle_info' style='padding:10px; border:1px solid #ddd; border-radius:8px; background:#f9f9f9; font-size:14px;'>
-                <div><b>Тип транспорта:</b> <span id='info_vehicle_type'>—</span></div>
-                <div><b>Тип учета:</b> <span id='info_meter_type'>—</span></div>
-                <div><b>Базовая норма:</b> <span id='info_base_consumption'>—</span></div>
-                <div><b>Коэффициент без груза:</b> <span id='info_empty'>—</span></div>
-                <div><b>Коэффициент с грузом:</b> <span id='info_loaded'>—</span></div>
-                <div><b>Коэффициент тяжелых условий:</b> <span id='info_heavy'>—</span></div>
+            <div style='padding:10px; border:1px solid #ddd; border-radius:8px; background:#f9f9f9; font-size:14px;'>
+                <div><b>Эслатма:</b> Объект ва транспортни рўйхатдан танланг.</div>
             </div>
 
             <div>
@@ -377,158 +396,9 @@ def new_request():
 
         </form>
     </div>
-
-    <script>
-        const objectsData = {objects_js};
-        const vehiclesData = {vehicles_js};
-
-        const form = document.getElementById('new_request_form');
-
-        const objectSearch = document.getElementById('object_search');
-        const objectId = document.getElementById('object_id');
-        const objectResults = document.getElementById('object_results');
-
-        const vehicleSearch = document.getElementById('vehicle_search');
-        const vehicleId = document.getElementById('vehicle_id');
-        const vehicleResults = document.getElementById('vehicle_results');
-
-        function meterTypeLabel(value) {{
-            if (value === 'speedometer') return 'Спидометр';
-            if (value === 'motohours') return 'Моточасы';
-            return '—';
-        }}
-
-        function meterUnit(value) {{
-            if (value === 'speedometer') return 'л/100 км';
-            if (value === 'motohours') return 'л/моточас';
-            return '';
-        }}
-
-        function clearVehicleInfo() {{
-            document.getElementById('info_vehicle_type').textContent = '—';
-            document.getElementById('info_meter_type').textContent = '—';
-            document.getElementById('info_base_consumption').textContent = '—';
-            document.getElementById('info_empty').textContent = '—';
-            document.getElementById('info_loaded').textContent = '—';
-            document.getElementById('info_heavy').textContent = '—';
-        }}
-
-        function renderResults(container, items, onPick) {{
-            if (!items.length) {{
-                container.style.display = 'none';
-                container.innerHTML = '';
-                return;
-            }}
-
-            container.innerHTML = items.map(item =>
-                `<div style="padding:8px; cursor:pointer; border-bottom:1px solid #eee;" data-id="${{item.id}}">${{item.label}}</div>`
-            ).join('');
-
-            container.style.display = 'block';
-
-            Array.from(container.children).forEach((el, index) => {{
-                el.addEventListener('click', () => onPick(items[index]));
-            }});
-        }}
-
-        objectSearch.addEventListener('input', function() {{
-            const q = this.value.trim().toLowerCase();
-            objectId.value = '';
-
-            if (!q) {{
-                objectResults.style.display = 'none';
-                objectResults.innerHTML = '';
-                return;
-            }}
-
-            const filtered = objectsData
-                .filter(item => item.label.toLowerCase().includes(q))
-                .sort((a, b) => a.label.length - b.label.length)
-                .slice(0, 20);
-
-            renderResults(objectResults, filtered, (item) => {{
-                objectSearch.value = item.label;
-                objectId.value = item.id;
-                objectResults.style.display = 'none';
-            }});
-        }});
-
-        vehicleSearch.addEventListener('input', function() {{
-            const q = this.value.trim().toLowerCase();
-            vehicleId.value = '';
-            clearVehicleInfo();
-
-            if (!q) {{
-                vehicleResults.style.display = 'none';
-                vehicleResults.innerHTML = '';
-                return;
-            }}
-
-            const filtered = vehiclesData
-                .filter(item => item.label.toLowerCase().includes(q))
-                .sort((a, b) => a.label.length - b.label.length)
-                .slice(0, 20);
-
-            renderResults(vehicleResults, filtered, (item) => {{
-                vehicleSearch.value = item.label;
-                vehicleId.value = item.id;
-                vehicleResults.style.display = 'none';
-
-                document.getElementById('info_vehicle_type').textContent = item.vehicle_type || '—';
-                document.getElementById('info_meter_type').textContent = meterTypeLabel(item.meter_type);
-                document.getElementById('info_base_consumption').textContent =
-                    item.base_consumption ? (item.base_consumption + ' ' + meterUnit(item.meter_type)) : '—';
-                document.getElementById('info_empty').textContent = item.load_coeff_empty || '—';
-                document.getElementById('info_loaded').textContent = item.load_coeff_loaded || '—';
-                document.getElementById('info_heavy').textContent = item.load_coeff_heavy || '—';
-            }});
-        }});
-
-        objectSearch.addEventListener('blur', function() {{
-            setTimeout(() => {{
-                if (!objectId.value) {{
-                    objectSearch.value = '';
-                }}
-            }}, 150);
-        }});
-
-        vehicleSearch.addEventListener('blur', function() {{
-            setTimeout(() => {{
-                if (!vehicleId.value) {{
-                    vehicleSearch.value = '';
-                    clearVehicleInfo();
-                }}
-            }}, 150);
-        }});
-
-        form.addEventListener('submit', function(e) {{
-            if (!objectId.value) {{
-                e.preventDefault();
-                alert('Объектни рўйхатдан танланг!');
-                objectSearch.focus();
-                return;
-            }}
-
-            if (!vehicleId.value) {{
-                e.preventDefault();
-                alert('Транспортни рўйхатдан танланг!');
-                vehicleSearch.focus();
-                return;
-            }}
-        }});
-
-        document.addEventListener('click', function(e) {{
-            if (!objectSearch.parentNode.contains(e.target)) {{
-                objectResults.style.display = 'none';
-            }}
-            if (!vehicleSearch.parentNode.contains(e.target)) {{
-                vehicleResults.style.display = 'none';
-            }}
-        }});
-    </script>
     """
 
-    return render_page("Новая заявка TEST 123", content)
+    return render_page("Новая заявка", content)
 
 
 @requests_bp.route("/requests/<int:request_id>")
