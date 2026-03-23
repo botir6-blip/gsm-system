@@ -8,49 +8,27 @@ requests_bp = Blueprint("requests_bp", __name__)
 
 
 def current_user_name():
-    try:
-        user = current_user()
-        if user:
-            return (
-                user.get("full_name")
-                or user.get("username")
-                or user.get("login")
-                or user.get("user_name")
-                or session.get("full_name")
-                or session.get("username")
-                or session.get("login")
-                or session.get("user_name")
-                or "Пользователь"
-            )
-    except Exception:
-        pass
-
+    user = current_user()
+    if user:
+        return (
+            user.get("full_name")
+            or user.get("username")
+            or user.get("login")
+            or "Пользователь"
+        )
     return (
         session.get("full_name")
         or session.get("username")
         or session.get("login")
-        or session.get("user_name")
         or "Пользователь"
     )
 
 
 def current_role():
-    try:
-        user = current_user()
-        if user:
-            for key in ["role", "role_name", "user_role", "position"]:
-                value = user.get(key)
-                if value:
-                    return str(value).strip()
-    except Exception:
-        pass
-
-    for key in ["role", "role_name", "user_role", "position"]:
-        value = session.get(key)
-        if value:
-            return str(value).strip()
-
-    return ""
+    user = current_user()
+    if not user:
+        return ""
+    return str(user.get("role") or "").strip()
 
 
 def is_admin():
@@ -580,27 +558,6 @@ def request_detail(request_id):
                 <tr><td style='padding:6px;'><b>Тип согласования</b></td><td style='padding:6px;'>{approval_type_label}</td></tr>
                 <tr><td style='padding:6px;'><b>Проект</b></td><td style='padding:6px;'>{r['project_name'] or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Комментарий</b></td><td style='padding:6px;'>{r['request_comment'] or '—'}</td></tr>
-            </table>
-        </div>
-
-        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
-            <h3 style='margin-top:0;'>Ход согласования</h3>
-            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
-                <tr><td style='padding:6px; width:260px;'><b>Заявку подал</b></td><td style='padding:6px;'>{r['requested_by'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Разрешил</b></td><td style='padding:6px;'>{r['approved_by'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Заправил</b></td><td style='padding:6px;'>{r['fueler_name'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Подтверждение водителя</b></td><td style='padding:6px;'>{"—" if "driver_name" not in r.keys() else (r["driver_name"] or "—")}</td></tr>
-                <tr><td style='padding:6px;'><b>Проверил</b></td><td style='padding:6px;'>{r['controller_name'] or '—'}</td></tr>
-            </table>
-        </div>
-
-        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
-            <h3 style='margin-top:0;'>Даты</h3>
-            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
-                <tr><td style='padding:6px; width:260px;'><b>Создана</b></td><td style='padding:6px;'>{r['created_at'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Разрешена</b></td><td style='padding:6px;'>{r['approved_at'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Заправлена</b></td><td style='padding:6px;'>{r['fueled_at'] or '—'}</td></tr>
-                <tr><td style='padding:6px;'><b>Проверена</b></td><td style='padding:6px;'>{r['checked_at'] or '—'}</td></tr>
             </table>
         </div>
     """
