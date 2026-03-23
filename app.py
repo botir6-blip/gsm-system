@@ -13,6 +13,21 @@ from layout import render_page, status_badge
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
 
+ROLE_NAMES = {
+    "admin": "Администратор",
+    "requester": "Инициатор заявки",
+    "internal_approver": "Согласующий по внутреннему транспорту",
+    "external_approver": "Согласующий по стороннему транспорту",
+    "fueler": "Оператор заправки",
+    "controller": "Контролёр",
+    "ats_operator": "АТС-диспетчер"
+}
+
+
+def get_role_name(role):
+    return ROLE_NAMES.get(role, role)
+
+
 init_db()
 
 # =========================
@@ -129,17 +144,18 @@ def index():
     <div class="grid-2">
         <div class="card">
             <h3>Ваш доступ</h3>
-            <p><b>Роль:</b> {user['role']}</p>
+            <p><b>Роль:</b> {get_role_name(user['role'])}</p>
             <p><b>Пользователь:</b> {user['full_name']}</p>
             <p><b>Компания:</b> {user['company_name'] or '-'}</p>
         </div>
         <div class="card">
             <h3>Порядок работы</h3>
-            <p>1. requester — создает заявку</p>
-            <p>2. approver — рассматривает и указывает поставщика дизеля</p>
-            <p>3. fueler — вводит фактическую заправку</p>
-            <p>4. controller — завершает проверку</p>
-            <p>admin — управляет справочниками и пользователями</p>
+            <p>1. Инициатор заявки — создает заявку</p>
+            <p>2. Согласующий по внутреннему или стороннему транспорту — рассматривает заявку</p>
+            <p>3. Оператор заправки — вводит фактическую заправку</p>
+            <p>4. Контролёр — завершает проверку</p>
+            <p>5. АТС-диспетчер — ведет справочник транспорта</p>
+            <p>Администратор — управляет системой полностью</p>
         </div>
     </div>
     """
@@ -202,7 +218,7 @@ def users_page():
             <td>{u['id']}</td>
             <td>{u['full_name']}</td>
             <td>{u['username']}</td>
-            <td>{u['role']}</td>
+            <td>{get_role_name(u['role'])}</td>
             <td>{u['company_name'] or ''}</td>
             <td>{"Да" if u['is_active'] else "Нет"}</td>
             <td>
@@ -222,11 +238,13 @@ def users_page():
             <input type="password" name="password" placeholder="Пароль" required>
             <select name="role" required>
                 <option value="">Выберите роль</option>
-                <option value="admin">admin</option>
-                <option value="requester">requester</option>
-                <option value="approver">approver</option>
-                <option value="fueler">fueler</option>
-                <option value="controller">controller</option>
+                <option value="admin">Администратор</option>
+                <option value="requester">Инициатор заявки</option>
+                <option value="internal_approver">Согласующий по внутреннему транспорту</option>
+                <option value="external_approver">Согласующий по стороннему транспорту</option>
+                <option value="fueler">Оператор заправки</option>
+                <option value="controller">Контролёр</option>
+                <option value="ats_operator">АТС-диспетчер</option>
             </select>
             <select name="company_id">
                 <option value="">Компания (необязательно для admin)</option>
@@ -318,11 +336,13 @@ def edit_user(user_id):
             <input type="text" name="username" value="{user_row['username']}" required>
             <input type="password" name="password" placeholder="Новый пароль (если нужно)">
             <select name="role" required>
-                <option value="admin" {"selected" if user_row["role"]=="admin" else ""}>admin</option>
-                <option value="requester" {"selected" if user_row["role"]=="requester" else ""}>requester</option>
-                <option value="approver" {"selected" if user_row["role"]=="approver" else ""}>approver</option>
-                <option value="fueler" {"selected" if user_row["role"]=="fueler" else ""}>fueler</option>
-                <option value="controller" {"selected" if user_row["role"]=="controller" else ""}>controller</option>
+                <option value="admin" {"selected" if user_row["role"]=="admin" else ""}>Администратор</option>
+                <option value="requester" {"selected" if user_row["role"]=="requester" else ""}>Инициатор заявки</option>
+                <option value="internal_approver" {"selected" if user_row["role"]=="internal_approver" else ""}>Согласующий по внутреннему транспорту</option>
+                <option value="external_approver" {"selected" if user_row["role"]=="external_approver" else ""}>Согласующий по стороннему транспорту</option>
+                <option value="fueler" {"selected" if user_row["role"]=="fueler" else ""}>Оператор заправки</option>
+                <option value="controller" {"selected" if user_row["role"]=="controller" else ""}>Контролёр</option>
+                <option value="ats_operator" {"selected" if user_row["role"]=="ats_operator" else ""}>АТС-диспетчер</option>
             </select>
             <select name="company_id">
                 <option value="">Компания</option>
@@ -587,7 +607,7 @@ def delete_object(object_id):
 # =========================
 @app.route("/vehicles", methods=["GET", "POST"])
 @login_required
-@role_required("admin")
+@role_required("admin", "ats_operator")
 def vehicles_page():
     if request.method == "POST":
         brand = request.form.get("brand", "").strip()
@@ -668,7 +688,7 @@ def vehicles_page():
 
 @app.route("/vehicles/edit/<int:vehicle_id>", methods=["GET", "POST"])
 @login_required
-@role_required("admin")
+@role_required("admin", "ats_operator")
 def edit_vehicle(vehicle_id):
     vehicle = fetch_one("SELECT * FROM vehicles WHERE id=%s", (vehicle_id,))
     if not vehicle:
@@ -732,7 +752,7 @@ def edit_vehicle(vehicle_id):
 
 @app.route("/vehicles/delete/<int:vehicle_id>")
 @login_required
-@role_required("admin")
+@role_required("admin", "ats_operator")
 def delete_vehicle(vehicle_id):
     execute_query("DELETE FROM vehicles WHERE id=%s", (vehicle_id,))
     flash("Транспорт удален.", "success")
@@ -914,12 +934,14 @@ def requests_page():
         if user["role"] == "requester":
             base_query += " WHERE fr.requester_company_id = %s "
             params = (user["company_id"],)
-        elif user["role"] == "approver":
+        elif user["role"] in ["internal_approver", "external_approver"]:
             base_query += " WHERE fr.status = 'new' "
         elif user["role"] == "fueler":
             base_query += " WHERE fr.status = 'approved' "
         elif user["role"] == "controller":
             base_query += " WHERE fr.status = 'fueled' "
+        elif user["role"] == "ats_operator":
+            base_query += " WHERE 1=0 "
 
     base_query += " ORDER BY fr.id DESC "
 
@@ -929,7 +951,7 @@ def requests_page():
     for r in rows_data:
         actions = [f'<a class="btn btn-view" href="/requests/view/{r["id"]}">Открыть</a>']
 
-        if r["status"] == "new" and user["role"] in ["admin", "approver"]:
+        if r["status"] == "new" and user["role"] in ["admin", "internal_approver", "external_approver"]:
             actions.append(f'<a class="btn btn-approve" href="/requests/approve/{r["id"]}">Рассмотреть</a>')
         if r["status"] == "approved" and user["role"] in ["admin", "fueler"]:
             actions.append(f'<a class="btn btn-fuel" href="/requests/fuel/{r["id"]}">Заправить</a>')
@@ -1046,7 +1068,7 @@ def view_request(request_id):
 # =========================
 @app.route("/requests/approve/<int:request_id>", methods=["GET", "POST"])
 @login_required
-@role_required("admin", "approver")
+@role_required("admin", "internal_approver", "external_approver")
 def approve_request(request_id):
     r = fetch_one("""
         SELECT
@@ -1377,7 +1399,6 @@ def transactions_page():
 
     transactions = fetch_all(query, params)
 
-    # Агар журнал бўш бўлса, fuel_requests дан оламиз
     if not transactions:
         fallback_query = """
             SELECT
