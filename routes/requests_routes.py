@@ -1,3 +1,11 @@
+from flask import Blueprint, request, redirect
+from auth import login_required
+from layout import render_page
+from db import fetch_all, execute_query
+
+# 🔴 МАНА ШУ ЙЎҚ ЭДИ
+requests_bp = Blueprint("requests_bp", __name__)
+
 @requests_bp.route("/requests")
 @login_required
 def requests_page():
