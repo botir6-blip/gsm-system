@@ -46,3 +46,33 @@ def execute_query(query, params=None):
     conn.commit()
     cur.close()
     conn.close()
+
+def init_db():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS companies (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(150) NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        full_name VARCHAR(150),
+        username VARCHAR(100),
+        password_hash TEXT,
+        role VARCHAR(30),
+        company_id INTEGER,
+        is_active BOOLEAN DEFAULT TRUE
+    )
+    """)
+
+    # минимал версия (кейин кенгайтирамиз)
+
+    conn.commit()
+    cur.close()
+    conn.close()
