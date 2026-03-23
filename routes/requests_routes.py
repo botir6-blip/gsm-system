@@ -18,7 +18,10 @@ def current_user_name():
 
 
 def current_role():
-    return (session.get("role") or "").strip()
+    role = session.get("role")
+    if role is None:
+        return ""
+    return str(role).strip()
 
 
 def is_admin():
@@ -42,7 +45,7 @@ def can_create_request():
 
 
 def normalize_approval_type(value):
-    v = (value or "").strip().lower()
+    v = str(value or "").strip().lower()
     if v == "external":
         return "external"
     return "internal"
@@ -60,12 +63,11 @@ def can_see_request_row(row):
     if is_internal_approver():
         return approval_type == "internal"
 
-    # Қолган ролларга заявкаларни кўриш мумкин
     return True
 
 
 def can_approve_request(row):
-    if (row.get("status") or "") != "new":
+    if str(row.get("status") or "") != "new":
         return False
 
     if is_admin():
@@ -131,8 +133,6 @@ def meter_unit(value):
 @requests_bp.route("/requests")
 @login_required
 def requests_page():
-    can_create = can_create_request()
-
     rows = fetch_all("""
         SELECT
             r.id,
@@ -155,7 +155,7 @@ def requests_page():
             r.created_at,
             r.project_name,
             r.fuel_supplier,
-            r.approval_type
+            COALESCE(r.approval_type, 'internal') AS approval_type
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
@@ -171,7 +171,7 @@ def requests_page():
         <h2 style='margin:0;'>Заявки</h2>
     """
 
-    if can_create:
+    if can_create_request():
         content += """
         <a href='/requests/new' style='text-decoration:none; padding:8px 12px; border:1px solid #ccc; border-radius:8px;'>
             ➕ Новая заявка
@@ -210,9 +210,7 @@ def requests_page():
 
             approve_btn = ""
             if can_approve_request(r):
-                approve_btn = f"""
-                    <a href='/requests/{r["id"]}' style='margin-left:8px;'>Согласовать</a>
-                """
+                approve_btn = f"<a href='/requests/{r['id']}' style='margin-left:8px;'>Согласовать</a>"
 
             row_bg = "background:#e8f5e9;" if r["status"] == "checked" else ""
 
@@ -492,7 +490,8 @@ def request_detail(request_id):
             v.base_consumption,
             v.load_coeff_empty,
             v.load_coeff_loaded,
-            v.load_coeff_heavy
+            v.load_coeff_heavy,
+            COALESCE(r.approval_type, 'internal') AS approval_type
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
@@ -637,7 +636,11 @@ def request_detail(request_id):
 @login_required
 def request_decision(request_id):
     req = fetch_one("""
-        SELECT id, status, requested_liters, approval_type
+        SELECT
+            id,
+            status,
+            requested_liters,
+            COALESCE(approval_type, 'internal') AS approval_type
         FROM fuel_requests
         WHERE id = %s
     """, (request_id,))
