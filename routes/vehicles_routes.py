@@ -10,7 +10,7 @@ vehicles_bp = Blueprint("vehicles_bp", __name__)
 @login_required
 def vehicles_page():
     rows = fetch_all("""
-        SELECT v.id, v.brand, v.vehicle_type, v.plate_number, c.name AS company_name
+        SELECT v.id, v.vehicle_name, v.plate_number, c.name AS company_name
         FROM vehicles v
         LEFT JOIN companies c ON c.id = v.company_id
         ORDER BY v.id DESC
@@ -36,8 +36,7 @@ def vehicles_page():
             content += f"""
             <tr>
                 <td>{row['id']}</td>
-                <td>{row['brand'] or ''}</td>
-                <td>{row['vehicle_type'] or ''}</td>
+                <td>{row['vehicle_name'] or ''}</td>
                 <td>{row['plate_number'] or ''}</td>
                 <td>{row['company_name'] or ''}</td>
                 <td><a href='/vehicles/edit/{row["id"]}'>✏️ Редактировать</a></td>
