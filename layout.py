@@ -259,7 +259,7 @@ def nav_menu():
         menu.append(f'<a href="{url_for("new_request_page")}">Новая заявка</a>')
 
     menu.append(f'<a href="{url_for("requests_page")}">Заявки</a>')
-    menu.append(f'<a href="{url_for("transactions_page")}">Журнал</a>')
+    menu.append(f'<a href="{url_for("transactions.transactions_page")}">Журнал</a>')
     menu.append(f'<a href="{url_for("logout")}">Выход</a>')
 
     return f'<div class="menu">{"".join(menu)}</div>'
