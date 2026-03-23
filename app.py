@@ -1370,14 +1370,48 @@ def transactions_page():
     params = ()
 
     if user["role"] != "admin" and user["company_id"]:
-        query += """
-            WHERE o.company_id = %s
-        """
+        query += " WHERE o.company_id = %s "
         params = (user["company_id"],)
 
     query += " ORDER BY ft.id DESC "
 
     transactions = fetch_all(query, params)
+
+    # Агар журнал бўш бўлса, fuel_requests дан оламиз
+    if not transactions:
+        fallback_query = """
+            SELECT
+                fr.id,
+                'chiqim' AS entry_type,
+                fr.actual_liters AS liters,
+                fr.speedometer,
+                fr.fueler_name AS entered_by,
+                CASE
+                    WHEN fr.fueling_comment IS NOT NULL AND fr.fueling_comment <> ''
+                    THEN 'Выдача по заявке №' || fr.id || '. ' || fr.fueling_comment
+                    ELSE 'Выдача по заявке №' || fr.id
+                END AS comment,
+                COALESCE(fr.fueled_at, fr.created_at) AS created_at,
+                v.brand,
+                v.vehicle_type,
+                v.plate_number,
+                o.name AS object_name
+            FROM fuel_requests fr
+            LEFT JOIN vehicles v ON fr.vehicle_id = v.id
+            LEFT JOIN objects o ON fr.object_id = o.id
+            WHERE fr.status IN ('fueled', 'checked')
+              AND fr.actual_liters IS NOT NULL
+        """
+
+        fallback_params = ()
+
+        if user["role"] != "admin" and user["company_id"]:
+            fallback_query += " AND o.company_id = %s "
+            fallback_params = (user["company_id"],)
+
+        fallback_query += " ORDER BY COALESCE(fr.fueled_at, fr.created_at) DESC "
+
+        transactions = fetch_all(fallback_query, fallback_params)
 
     rows = ""
     for t in transactions:
