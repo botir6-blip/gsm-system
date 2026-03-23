@@ -284,9 +284,9 @@ def new_request():
                 "<p>Транспорт рўйхатдан танланмади. Орқага қайтиб, транспортни қидирувдан танланг.</p>"
             )
 
-        full_comment = f\"\"\"Остаток в баке: {tank_balance}
+        full_comment = f"""Остаток в баке: {tank_balance}
 Маршрут / объем работ: {route_work}
-Комментарий: {comment}\"\"\"
+Комментарий: {comment}"""
 
         execute_query("""
             INSERT INTO fuel_requests (
