@@ -528,7 +528,7 @@ def new_request():
     </script>
     """
 
-    return render_page("Новая заявка", content)
+    return render_page("Новая заявка TEST 123", content)
 
 
 @requests_bp.route("/requests/<int:request_id>")
