@@ -228,7 +228,7 @@ def nav_menu():
     if not user:
         return f"""
         <div class="menu">
-            <a href="{url_for('login')}">Вход</a>
+            <a href="{url_for('auth_bp.login')}">Вход</a>
         </div>
         """
 
@@ -236,10 +236,10 @@ def nav_menu():
 
     if user["role"] == "admin":
         menu += [
-            f'<a href="{url_for("companies_page")}">Компании</a>',
+            f'<a href="{url_for("companies_bp.companies_page")}">Компании</a>',
             f'<a href="{url_for("objects_page")}">Объекты</a>',
             f'<a href="{url_for("vehicles_page")}">Транспорт</a>',
-            f'<a href="{url_for("users_page")}">Пользователи</a>',
+            f'<a href="{url_for("users_bp.users_page")}">Пользователи</a>',
         ]
 
     if user["role"] in ["admin", "requester"]:
@@ -247,7 +247,7 @@ def nav_menu():
 
     menu.append(f'<a href="{url_for("requests_page")}">Заявки</a>')
     menu.append(f'<a href="{url_for("transactions_page")}">Журнал</a>')
-    menu.append(f'<a href="{url_for("logout")}">Выход</a>')
+    menu.append(f'<a href="{url_for("auth_bp.logout")}">Выход</a>')
 
     return f'<div class="menu">{"".join(menu)}</div>'
 
