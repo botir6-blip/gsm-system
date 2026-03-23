@@ -33,7 +33,7 @@ def role_required(*roles):
             user = current_user()
             if not user:
                 flash("Сначала войдите в систему.", "error")
-                return redirect(url_for("login"))
+                return redirect(url_for("auth_bp.login"))
             if user["role"] not in roles:
                 flash("У вас нет доступа к этому разделу.", "error")
                 return redirect(url_for("index"))
