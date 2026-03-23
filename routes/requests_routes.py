@@ -61,7 +61,6 @@ def requests_page():
 
     return render_page("Заявки", content)
 
-
 @requests_bp.route("/requests/new", methods=["GET", "POST"])
 @login_required
 def new_request():
@@ -70,10 +69,14 @@ def new_request():
         vehicle_id = request.form.get("vehicle_id") or None
         requested_liters = request.form.get("requested_liters") or 0
         requested_by = request.form.get("requested_by") or ""
-        requester_position = request.form.get("requester_position") or ""
         project_name = request.form.get("project_name") or ""
-        fuel_supplier = request.form.get("fuel_supplier") or ""
-        request_comment = request.form.get("request_comment") or ""
+        tank_balance = request.form.get("tank_balance") or ""
+        route_work = request.form.get("route_work") or ""
+        comment = request.form.get("comment") or ""
+
+        full_comment = f"""Остаток в баке: {tank_balance}
+Маршрут / объем работ: {route_work}
+Комментарий: {comment}"""
 
         execute_query("""
             INSERT INTO fuel_requests (
@@ -81,73 +84,119 @@ def new_request():
                 vehicle_id,
                 requested_liters,
                 requested_by,
-                requester_position,
                 project_name,
-                fuel_supplier,
                 request_comment,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'new')
+            VALUES (%s, %s, %s, %s, %s, %s, 'new')
         """, (
             object_id,
             vehicle_id,
             requested_liters,
             requested_by,
-            requester_position,
             project_name,
-            fuel_supplier,
-            request_comment
+            full_comment
         ))
 
         return redirect("/requests")
 
-    objects = fetch_all("SELECT id, name FROM objects ORDER BY name")
+    objects = fetch_all("""
+        SELECT id, name
+        FROM objects
+        ORDER BY name
+    """)
+
     vehicles = fetch_all("""
-        SELECT id, plate_number, brand
+        SELECT id, plate_number, brand, vehicle_type
         FROM vehicles
         ORDER BY plate_number
     """)
 
-    content = "<h2>Новая заявка</h2>"
-    content += "<form method='post'>"
+    users = fetch_all("""
+        SELECT id, full_name
+        FROM users
+        ORDER BY full_name
+    """)
 
-    content += "<label>Объект:</label><br>"
-    content += "<select name='object_id' required>"
-    content += "<option value=''>-- Выберите --</option>"
+    content = """
+    <div style='max-width:650px; margin:0 auto;'>
+        <h2 style='margin-bottom:18px;'>Новая заявка</h2>
+        <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
+
+            <div>
+                <label>1. Объект заправки:</label><br>
+                <select name='object_id' required style='width:100%; padding:8px;'>
+                    <option value=''>-- Выберите --</option>
+    """
+
     for o in objects:
         content += f"<option value='{o['id']}'>{o['name']}</option>"
-    content += "</select><br><br>"
 
-    content += "<label>Транспорт:</label><br>"
-    content += "<select name='vehicle_id' required>"
-    content += "<option value=''>-- Выберите --</option>"
+    content += """
+                </select>
+            </div>
+
+            <div>
+                <label>2. Транспорт:</label><br>
+                <select name='vehicle_id' required style='width:100%; padding:8px;'>
+                    <option value=''>-- Выберите --</option>
+    """
+
     for v in vehicles:
-        plate = v['plate_number'] or ''
-        brand = v['brand'] or ''
-        content += f"<option value='{v['id']}'>{plate} {brand}</option>"
-    content += "</select><br><br>"
+        plate = v["plate_number"] or ""
+        brand = v["brand"] or ""
+        vtype = v["vehicle_type"] or ""
+        content += f"<option value='{v['id']}'>{plate} | {brand} | {vtype}</option>"
 
-    content += "<label>Запрашиваемый объем:</label><br>"
-    content += "<input type='number' step='0.01' name='requested_liters' required><br><br>"
+    content += """
+                </select>
+            </div>
 
-    content += "<label>Кто подает заявку:</label><br>"
-    content += "<input type='text' name='requested_by' required><br><br>"
+            <div>
+                <label>3. Остаток в баке (л):</label><br>
+                <input type='number' step='0.01' name='tank_balance' style='width:100%; padding:8px;'>
+            </div>
 
-    content += "<label>Должность:</label><br>"
-    content += "<input type='text' name='requester_position'><br><br>"
+            <div>
+                <label>4. Запрашиваемое количество топлива (л):</label><br>
+                <input type='number' step='0.01' name='requested_liters' required style='width:100%; padding:8px;'>
+            </div>
 
-    content += "<label>Проект:</label><br>"
-    content += "<input type='text' name='project_name'><br><br>"
+            <div>
+                <label>5. Маршрут / объем работ:</label><br>
+                <input type='text' name='route_work' style='width:100%; padding:8px;'>
+            </div>
 
-    content += "<label>Поставщик топлива:</label><br>"
-    content += "<input type='text' name='fuel_supplier'><br><br>"
+            <div>
+                <label>6. Кто подает заявку:</label><br>
+                <select name='requested_by' required style='width:100%; padding:8px;'>
+                    <option value=''>-- Выберите --</option>
+    """
 
-    content += "<label>Комментарий:</label><br>"
-    content += "<textarea name='request_comment' rows='4' style='width:100%;'></textarea><br><br>"
+    for u in users:
+        content += f"<option value='{u['full_name']}'>{u['full_name']}</option>"
 
-    content += "<button type='submit'>Сохранить заявку</button> "
-    content += "<a href='/requests'>Назад</a>"
+    content += """
+                </select>
+            </div>
 
-    content += "</form>"
+            <div>
+                <label>7. Проект:</label><br>
+                <input type='text' name='project_name' style='width:100%; padding:8px;'>
+            </div>
+
+            <div>
+                <label>8. Комментарий:</label><br>
+                <textarea name='comment' rows='4' style='width:100%; padding:8px;'></textarea>
+            </div>
+
+            <div style='margin-top:8px;'>
+                <button type='submit' style='padding:10px 16px;'>Сохранить заявку</button>
+                <a href='/requests' style='margin-left:12px;'>Назад</a>
+            </div>
+
+        </form>
+    </div>
+    """
 
     return render_page("Новая заявка", content)
