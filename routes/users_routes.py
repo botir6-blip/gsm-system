@@ -198,7 +198,7 @@ def edit_user(user_id):
             <button type="submit">Сохранить изменения</button>
         </form>
         <br>
-        <a class="btn btn-back" href="{url_for('users_page')}">Назад</a>
+        <a class="btn btn-back" href="{url_for('users_bp.users_page')}">Назад</a>
     </div>
     """
     return render_page("Редактирование пользователя", content)
