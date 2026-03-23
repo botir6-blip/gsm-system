@@ -22,69 +22,102 @@ def requests_page():
             r.fueler_name,
             r.controller_name,
             r.status,
-            r.created_at,
-            r.approved_at,
-            r.fueled_at,
-            r.checked_at
+            r.created_at
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
-        ORDER BY r.id DESC
+        ORDER BY
+            CASE WHEN r.status = 'checked' THEN 1 ELSE 0 END,
+            r.id DESC
     """)
 
     def status_label(status):
         if status == "new":
-            return "Новая заявка"
+            return "Новая"
         if status == "approved":
             return "Разрешена"
         if status == "fueled":
             return "Заправлена"
         if status == "driver_confirmed":
-            return "Подтверждена водителем"
+            return "Подтверждена"
         if status == "checked":
-            return "Проверена"
-        return status or ""
+            return "Закрыта"
+        return status or "—"
 
-    content = "<h2>Заявки</h2>"
-    content += "<p><a href='/requests/new'>➕ Новая заявка</a></p>"
+    def status_style(status):
+        if status == "checked":
+            return "background:#e8f5e9; border-left:5px solid #2e7d32;"
+        if status == "approved":
+            return "background:#e3f2fd; border-left:5px solid #1565c0;"
+        if status == "fueled":
+            return "background:#fff8e1; border-left:5px solid #f9a825;"
+        if status == "driver_confirmed":
+            return "background:#f3e5f5; border-left:5px solid #7b1fa2;"
+        return "background:#fff3e0; border-left:5px solid #ef6c00;"
 
-    if rows:
-        for r in rows:
-            content += f"""
-            <div style='border:1px solid #ddd; border-radius:10px; padding:12px; margin-bottom:12px; background:#fff;'>
-                <div style='display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;'>
-                    <div><b>Заявка №{r['id']}</b></div>
-                    <div><b>Статус:</b> {status_label(r['status'])}</div>
+    content = """
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;'>
+        <h2 style='margin:0;'>Заявки</h2>
+        <a href='/requests/new' style='text-decoration:none; padding:8px 12px; border:1px solid #ccc; border-radius:8px;'>
+            ➕ Новая заявка
+        </a>
+    </div>
+    """
+
+    active_rows = [r for r in rows if r["status"] != "checked"]
+    closed_rows = [r for r in rows if r["status"] == "checked"]
+
+    def render_card(r):
+        transport_text = f"{r['plate_number'] or ''} {r['vehicle_name'] or ''}".strip()
+        return f"""
+        <div style='{status_style(r["status"])} padding:10px 12px; border-radius:10px; margin-bottom:10px;'>
+            <div style='display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;'>
+                <div>
+                    <b>№{r['id']}</b> | {status_label(r['status'])}
                 </div>
-
-                <div style='margin-top:8px; font-size:14px;'>
-                    <div><b>Объект:</b> {r['object_name'] or ''}</div>
-                    <div><b>Транспорт:</b> {(r['plate_number'] or '')} {(r['vehicle_name'] or '')}</div>
-                    <div><b>Запрошено:</b> {r['requested_liters'] or ''} л</div>
-                    <div><b>Фактически:</b> {r['actual_liters'] or ''} л</div>
-                </div>
-
-                <div style='margin-top:10px; padding:10px; background:#f8f8f8; border-radius:8px; font-size:14px;'>
-                    <div><b>1. Заявку подал:</b> {r['requested_by'] or '—'}</div>
-                    <div><b>2. Разрешил:</b> {r['approved_by'] or '—'}</div>
-                    <div><b>3. Заправил:</b> {r['fueler_name'] or '—'}</div>
-                    <div><b>4. Подтверждение водителя:</b> —</div>
-                    <div><b>5. Проверил:</b> {r['controller_name'] or '—'}</div>
-                </div>
-
-                <div style='margin-top:10px; font-size:13px; color:#555;'>
-                    <div><b>Создана:</b> {r['created_at'] or '—'}</div>
-                    <div><b>Разрешена:</b> {r['approved_at'] or '—'}</div>
-                    <div><b>Заправлена:</b> {r['fueled_at'] or '—'}</div>
-                    <div><b>Проверена:</b> {r['checked_at'] or '—'}</div>
+                <div style='font-size:13px; color:#555;'>
+                    {r['created_at'] or ''}
                 </div>
             </div>
-            """
+
+            <div style='margin-top:6px; font-size:14px; line-height:1.5;'>
+                <div><b>Объект:</b> {r['object_name'] or '—'}</div>
+                <div><b>Транспорт:</b> {transport_text or '—'}</div>
+                <div><b>Топливо:</b> {r['requested_liters'] or '—'} л
+                    {f" | факт: {r['actual_liters']} л" if r['actual_liters'] else ""}
+                </div>
+            </div>
+
+            <div style='margin-top:8px; font-size:13px; color:#333; line-height:1.5;'>
+                <div>
+                    <b>Подал:</b> {r['requested_by'] or '—'}
+                    &nbsp; | &nbsp;
+                    <b>Разрешил:</b> {r['approved_by'] or '—'}
+                </div>
+                <div>
+                    <b>Заправил:</b> {r['fueler_name'] or '—'}
+                    &nbsp; | &nbsp;
+                    <b>Проверил:</b> {r['controller_name'] or '—'}
+                </div>
+            </div>
+        </div>
+        """
+
+    content += "<h3 style='margin:16px 0 10px 0;'>Текущие заявки</h3>"
+    if active_rows:
+        for r in active_rows:
+            content += render_card(r)
     else:
-        content += "<p>Заявок пока нет.</p>"
+        content += "<p>Активных заявок нет.</p>"
+
+    content += "<h3 style='margin:22px 0 10px 0;'>Закрытые заявки</h3>"
+    if closed_rows:
+        for r in closed_rows:
+            content += render_card(r)
+    else:
+        content += "<p>Закрытых заявок нет.</p>"
 
     return render_page("Заявки", content)
-
 
 @requests_bp.route("/requests/new", methods=["GET", "POST"])
 @login_required
