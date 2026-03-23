@@ -65,6 +65,8 @@ def requests_page():
 @requests_bp.route("/requests/new", methods=["GET", "POST"])
 @login_required
 def new_request():
+    import json
+
     if request.method == "POST":
         object_id = request.form.get("object_id") or None
         vehicle_id = request.form.get("vehicle_id") or None
@@ -129,10 +131,7 @@ def new_request():
     """)
 
     objects_js = json.dumps([
-        {
-            "id": o["id"],
-            "label": o["name"] or ""
-        }
+        {"id": o["id"], "label": o["name"] or ""}
         for o in objects
     ], ensure_ascii=False)
 
@@ -158,34 +157,32 @@ def new_request():
 
         <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
 
-            <div>
+            <div style='position:relative;'>
                 <label><b>1. Объект заправки:</b></label><br>
                 <input
                     type='text'
                     id='object_search'
-                    list='objects_list'
                     placeholder='Начните вводить название объекта'
                     autocomplete='off'
                     style='width:100%; padding:8px;'
                     required
                 >
-                <datalist id='objects_list'></datalist>
                 <input type='hidden' name='object_id' id='object_id' required>
+                <div id='object_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:180px; overflow-y:auto; z-index:1000;'></div>
             </div>
 
-            <div>
+            <div style='position:relative;'>
                 <label><b>2. Транспорт:</b></label><br>
                 <input
                     type='text'
                     id='vehicle_search'
-                    list='vehicles_list'
-                    placeholder='Начните вводить гос.номер, наименование или тип'
+                    placeholder='Начните вводить гос.номер, транспорт или тип'
                     autocomplete='off'
                     style='width:100%; padding:8px;'
                     required
                 >
-                <datalist id='vehicles_list'></datalist>
                 <input type='hidden' name='vehicle_id' id='vehicle_id' required>
+                <div id='vehicle_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:220px; overflow-y:auto; z-index:1000;'></div>
             </div>
 
             <div id='vehicle_info' style='padding:10px; border:1px solid #ddd; border-radius:8px; background:#f9f9f9; font-size:14px;'>
@@ -221,7 +218,7 @@ def new_request():
     for u in users:
         content += f"<option value='{u['full_name']}'>{u['full_name']}</option>"
 
-    content += """
+    content += f"""
                 </select>
             </div>
 
@@ -249,28 +246,11 @@ def new_request():
 
         const objectSearch = document.getElementById('object_search');
         const objectId = document.getElementById('object_id');
-        const objectsList = document.getElementById('objects_list');
+        const objectResults = document.getElementById('object_results');
 
         const vehicleSearch = document.getElementById('vehicle_search');
         const vehicleId = document.getElementById('vehicle_id');
-        const vehiclesList = document.getElementById('vehicles_list');
-
-        function fillDatalist(listEl, data) {{
-            listEl.innerHTML = '';
-            data.forEach(item => {{
-                const option = document.createElement('option');
-                option.value = item.label;
-                listEl.appendChild(option);
-            }});
-        }}
-
-        fillDatalist(objectsList, objectsData);
-        fillDatalist(vehiclesList, vehiclesData);
-
-        objectSearch.addEventListener('input', function() {{
-            const found = objectsData.find(item => item.label === this.value);
-            objectId.value = found ? found.id : '';
-        }});
+        const vehicleResults = document.getElementById('vehicle_results');
 
         function meterTypeLabel(value) {{
             if (value === 'speedometer') return 'Спидометр';
@@ -293,22 +273,82 @@ def new_request():
             document.getElementById('info_heavy').textContent = '—';
         }}
 
-        vehicleSearch.addEventListener('input', function() {{
-            const found = vehiclesData.find(item => item.label === this.value);
-            vehicleId.value = found ? found.id : '';
-
-            if (!found) {{
-                clearVehicleInfo();
+        function renderResults(container, items, onPick) {{
+            if (!items.length) {{
+                container.style.display = 'none';
+                container.innerHTML = '';
                 return;
             }}
 
-            document.getElementById('info_vehicle_type').textContent = found.vehicle_type || '—';
-            document.getElementById('info_meter_type').textContent = meterTypeLabel(found.meter_type);
-            document.getElementById('info_base_consumption').textContent =
-                found.base_consumption ? (found.base_consumption + ' ' + meterUnit(found.meter_type)) : '—';
-            document.getElementById('info_empty').textContent = found.load_coeff_empty || '—';
-            document.getElementById('info_loaded').textContent = found.load_coeff_loaded || '—';
-            document.getElementById('info_heavy').textContent = found.load_coeff_heavy || '—';
+            container.innerHTML = items.map(item =>
+                `<div style="padding:8px; cursor:pointer; border-bottom:1px solid #eee;" data-id="${{item.id}}">${{item.label}}</div>`
+            ).join('');
+
+            container.style.display = 'block';
+
+            Array.from(container.children).forEach((el, index) => {{
+                el.addEventListener('click', () => onPick(items[index]));
+            }});
+        }}
+
+        objectSearch.addEventListener('input', function() {{
+            const q = this.value.trim().toLowerCase();
+            objectId.value = '';
+
+            if (!q) {{
+                objectResults.style.display = 'none';
+                objectResults.innerHTML = '';
+                return;
+            }}
+
+            const filtered = objectsData
+                .filter(item => item.label.toLowerCase().includes(q))
+                .slice(0, 20);
+
+            renderResults(objectResults, filtered, (item) => {{
+                objectSearch.value = item.label;
+                objectId.value = item.id;
+                objectResults.style.display = 'none';
+            }});
+        }});
+
+        vehicleSearch.addEventListener('input', function() {{
+            const q = this.value.trim().toLowerCase();
+            vehicleId.value = '';
+            clearVehicleInfo();
+
+            if (!q) {{
+                vehicleResults.style.display = 'none';
+                vehicleResults.innerHTML = '';
+                return;
+            }}
+
+            const filtered = vehiclesData
+                .filter(item => item.label.toLowerCase().includes(q))
+                .slice(0, 20);
+
+            renderResults(vehicleResults, filtered, (item) => {{
+                vehicleSearch.value = item.label;
+                vehicleId.value = item.id;
+                vehicleResults.style.display = 'none';
+
+                document.getElementById('info_vehicle_type').textContent = item.vehicle_type || '—';
+                document.getElementById('info_meter_type').textContent = meterTypeLabel(item.meter_type);
+                document.getElementById('info_base_consumption').textContent =
+                    item.base_consumption ? (item.base_consumption + ' ' + meterUnit(item.meter_type)) : '—';
+                document.getElementById('info_empty').textContent = item.load_coeff_empty || '—';
+                document.getElementById('info_loaded').textContent = item.load_coeff_loaded || '—';
+                document.getElementById('info_heavy').textContent = item.load_coeff_heavy || '—';
+            }});
+        }});
+
+        document.addEventListener('click', function(e) {{
+            if (!objectSearch.parentNode.contains(e.target)) {{
+                objectResults.style.display = 'none';
+            }}
+            if (!vehicleSearch.parentNode.contains(e.target)) {{
+                vehicleResults.style.display = 'none';
+            }}
         }});
     </script>
     """
