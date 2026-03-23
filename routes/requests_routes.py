@@ -188,6 +188,12 @@ def new_request():
         route_work = request.form.get("route_work") or ""
         comment = request.form.get("comment") or ""
 
+        if not object_id or not vehicle_id:
+            return render_page(
+                "Ошибка",
+                "<p>Объект ва транспорт рўйхатдан танланиши шарт. Орқага қайтиб, қидирув рўйхатидан танланг.</p>"
+            )
+
         full_comment = f"""Остаток в баке: {tank_balance}
 Маршрут / объем работ: {route_work}
 Комментарий: {comment}"""
@@ -274,7 +280,7 @@ def new_request():
     <div style='max-width:760px; margin:0 auto;'>
         <h2 style='margin-bottom:16px;'>Новая заявка</h2>
 
-        <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
+        <form method='post' id='new_request_form' style='display:flex; flex-direction:column; gap:12px;'>
 
             <div style='position:relative;'>
                 <label><b>1. Объект заправки:</b></label><br>
@@ -287,7 +293,7 @@ def new_request():
                     required
                 >
                 <input type='hidden' name='object_id' id='object_id' required>
-                <div id='object_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:180px; overflow-y:auto; z-index:1000;'></div>
+                <div id='object_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:180px; overflow-y:auto; z-index:1000; border-radius:8px;'></div>
             </div>
 
             <div style='position:relative;'>
@@ -301,7 +307,7 @@ def new_request():
                     required
                 >
                 <input type='hidden' name='vehicle_id' id='vehicle_id' required>
-                <div id='vehicle_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:220px; overflow-y:auto; z-index:1000;'></div>
+                <div id='vehicle_results' style='display:none; position:absolute; left:0; right:0; background:#fff; border:1px solid #ccc; max-height:220px; overflow-y:auto; z-index:1000; border-radius:8px;'></div>
             </div>
 
             <div id='vehicle_info' style='padding:10px; border:1px solid #ddd; border-radius:8px; background:#f9f9f9; font-size:14px;'>
@@ -376,6 +382,8 @@ def new_request():
         const objectsData = {objects_js};
         const vehiclesData = {vehicles_js};
 
+        const form = document.getElementById('new_request_form');
+
         const objectSearch = document.getElementById('object_search');
         const objectId = document.getElementById('object_id');
         const objectResults = document.getElementById('object_results');
@@ -435,6 +443,7 @@ def new_request():
 
             const filtered = objectsData
                 .filter(item => item.label.toLowerCase().includes(q))
+                .sort((a, b) => a.label.length - b.label.length)
                 .slice(0, 20);
 
             renderResults(objectResults, filtered, (item) => {{
@@ -457,6 +466,7 @@ def new_request():
 
             const filtered = vehiclesData
                 .filter(item => item.label.toLowerCase().includes(q))
+                .sort((a, b) => a.label.length - b.label.length)
                 .slice(0, 20);
 
             renderResults(vehicleResults, filtered, (item) => {{
@@ -472,6 +482,39 @@ def new_request():
                 document.getElementById('info_loaded').textContent = item.load_coeff_loaded || '—';
                 document.getElementById('info_heavy').textContent = item.load_coeff_heavy || '—';
             }});
+        }});
+
+        objectSearch.addEventListener('blur', function() {{
+            setTimeout(() => {{
+                if (!objectId.value) {{
+                    objectSearch.value = '';
+                }}
+            }}, 150);
+        }});
+
+        vehicleSearch.addEventListener('blur', function() {{
+            setTimeout(() => {{
+                if (!vehicleId.value) {{
+                    vehicleSearch.value = '';
+                    clearVehicleInfo();
+                }}
+            }}, 150);
+        }});
+
+        form.addEventListener('submit', function(e) {{
+            if (!objectId.value) {{
+                e.preventDefault();
+                alert('Объектни рўйхатдан танланг!');
+                objectSearch.focus();
+                return;
+            }}
+
+            if (!vehicleId.value) {{
+                e.preventDefault();
+                alert('Транспортни рўйхатдан танланг!');
+                vehicleSearch.focus();
+                return;
+            }}
         }});
 
         document.addEventListener('click', function(e) {{
