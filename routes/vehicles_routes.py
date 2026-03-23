@@ -6,42 +6,77 @@ from db import fetch_all, fetch_one, execute_query
 vehicles_bp = Blueprint("vehicles_bp", __name__)
 
 
+def meter_type_label(value):
+    if value == "speedometer":
+        return "Спидометр"
+    if value == "motohours":
+        return "Моточасы"
+    return ""
+
+
+def meter_unit(value):
+    if value == "speedometer":
+        return "л/100 км"
+    if value == "motohours":
+        return "л/моточас"
+    return ""
+
+
 @vehicles_bp.route("/vehicles")
 @login_required
 def vehicles_page():
     rows = fetch_all("""
-        SELECT v.id, v.vehicle_name, v.plate_number, c.name AS company_name
-        FROM vehicles v
-        LEFT JOIN companies c ON c.id = v.company_id
-        ORDER BY v.id DESC
+        SELECT
+            id,
+            vehicle_name,
+            plate_number,
+            meter_type,
+            base_consumption,
+            load_coeff_empty,
+            load_coeff_loaded,
+            load_coeff_heavy
+        FROM vehicles
+        ORDER BY id DESC
     """)
 
     content = "<h2>Транспорт</h2>"
-
     content += "<p><a href='/vehicles/new'>➕ Добавить транспорт</a></p>"
 
     if rows:
         content += """
-        <table border='1' cellpadding='8' cellspacing='0' style='border-collapse: collapse; width:100%;'>
+        <table border='1' cellpadding='8' cellspacing='0'
+               style='border-collapse: collapse; width:100%; font-size:14px;'>
             <tr>
                 <th>ID</th>
-                <th>Марка</th>
-                <th>Тип</th>
+                <th>Наименование транспорта</th>
                 <th>Гос.номер</th>
-                <th>Компания</th>
+                <th>Тип учета</th>
+                <th>Базовая норма</th>
+                <th>Без груза</th>
+                <th>С грузом</th>
+                <th>Тяжелые условия</th>
                 <th>Действия</th>
             </tr>
         """
+
         for row in rows:
+            unit = meter_unit(row["meter_type"])
+            base_text = f"{row['base_consumption']} {unit}" if row["base_consumption"] else ""
+
             content += f"""
             <tr>
                 <td>{row['id']}</td>
                 <td>{row['vehicle_name'] or ''}</td>
                 <td>{row['plate_number'] or ''}</td>
-                <td>{row['company_name'] or ''}</td>
+                <td>{meter_type_label(row['meter_type'])}</td>
+                <td>{base_text}</td>
+                <td>{row['load_coeff_empty'] or ''}</td>
+                <td>{row['load_coeff_loaded'] or ''}</td>
+                <td>{row['load_coeff_heavy'] or ''}</td>
                 <td><a href='/vehicles/edit/{row["id"]}'>✏️ Редактировать</a></td>
             </tr>
             """
+
         content += "</table>"
     else:
         content += "<p>Транспорт пока не добавлен.</p>"
@@ -53,43 +88,97 @@ def vehicles_page():
 @login_required
 def vehicles_new():
     if request.method == "POST":
-        brand = request.form.get("brand", "").strip()
-        vehicle_type = request.form.get("vehicle_type", "").strip()
+        vehicle_name = request.form.get("vehicle_name", "").strip()
         plate_number = request.form.get("plate_number", "").strip().upper()
-        company_id = request.form.get("company_id") or None
+        meter_type = request.form.get("meter_type") or None
+        base_consumption = request.form.get("base_consumption") or None
+        load_coeff_empty = request.form.get("load_coeff_empty") or 1.00
+        load_coeff_loaded = request.form.get("load_coeff_loaded") or 1.15
+        load_coeff_heavy = request.form.get("load_coeff_heavy") or 1.30
 
         execute_query("""
-            INSERT INTO vehicles (brand, vehicle_type, plate_number, company_id)
-            VALUES (%s, %s, %s, %s)
-        """, (brand, vehicle_type, plate_number, company_id))
+            INSERT INTO vehicles (
+                vehicle_name,
+                plate_number,
+                meter_type,
+                base_consumption,
+                load_coeff_empty,
+                load_coeff_loaded,
+                load_coeff_heavy
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            vehicle_name,
+            plate_number,
+            meter_type,
+            base_consumption,
+            load_coeff_empty,
+            load_coeff_loaded,
+            load_coeff_heavy
+        ))
 
         return redirect("/vehicles")
 
-    companies = fetch_all("SELECT id, name FROM companies ORDER BY name")
+    content = """
+    <div style='max-width:700px; margin:0 auto;'>
+        <h2>Добавить транспорт</h2>
 
-    content = "<h2>Добавить транспорт</h2>"
-    content += "<form method='post'>"
+        <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
 
-    content += "<label>Марка:</label><br>"
-    content += "<input type='text' name='brand' required><br><br>"
+            <div>
+                <label>Наименование транспорта:</label><br>
+                <input type='text' name='vehicle_name' required
+                       style='width:100%; padding:8px;'>
+            </div>
 
-    content += "<label>Тип транспорта:</label><br>"
-    content += "<input type='text' name='vehicle_type' required><br><br>"
+            <div>
+                <label>Гос.номер:</label><br>
+                <input type='text' name='plate_number' required
+                       style='width:100%; padding:8px;'>
+            </div>
 
-    content += "<label>Гос.номер:</label><br>"
-    content += "<input type='text' name='plate_number' required><br><br>"
+            <div>
+                <label>Тип учета:</label><br>
+                <select name='meter_type' required style='width:100%; padding:8px;'>
+                    <option value=''>-- Выберите --</option>
+                    <option value='speedometer'>Спидометр</option>
+                    <option value='motohours'>Моточасы</option>
+                </select>
+            </div>
 
-    content += "<label>Компания:</label><br>"
-    content += "<select name='company_id' required>"
-    content += "<option value=''>-- Выберите --</option>"
-    for c in companies:
-        content += f"<option value='{c['id']}'>{c['name']}</option>"
-    content += "</select><br><br>"
+            <div>
+                <label>Базовая норма расхода:</label><br>
+                <input type='number' step='0.01' name='base_consumption'
+                       style='width:100%; padding:8px;'>
+                <small>Для спидометра: л/100 км, для моточасов: л/моточас</small>
+            </div>
 
-    content += "<button type='submit'>Сохранить</button> "
-    content += "<a href='/vehicles'>Отмена</a>"
+            <div>
+                <label>Коэффициент без груза:</label><br>
+                <input type='number' step='0.01' name='load_coeff_empty' value='1.00'
+                       style='width:100%; padding:8px;'>
+            </div>
 
-    content += "</form>"
+            <div>
+                <label>Коэффициент с грузом:</label><br>
+                <input type='number' step='0.01' name='load_coeff_loaded' value='1.15'
+                       style='width:100%; padding:8px;'>
+            </div>
+
+            <div>
+                <label>Коэффициент тяжелых условий:</label><br>
+                <input type='number' step='0.01' name='load_coeff_heavy' value='1.30'
+                       style='width:100%; padding:8px;'>
+            </div>
+
+            <div style='margin-top:8px;'>
+                <button type='submit' style='padding:10px 16px;'>Сохранить</button>
+                <a href='/vehicles' style='margin-left:12px;'>Отмена</a>
+            </div>
+
+        </form>
+    </div>
+    """
 
     return render_page("Добавить транспорт", content)
 
@@ -97,52 +186,122 @@ def vehicles_new():
 @vehicles_bp.route("/vehicles/edit/<int:vehicle_id>", methods=["GET", "POST"])
 @login_required
 def vehicles_edit(vehicle_id):
-    vehicle = fetch_one("SELECT * FROM vehicles WHERE id = %s", (vehicle_id,))
+    vehicle = fetch_one("""
+        SELECT
+            id,
+            vehicle_name,
+            plate_number,
+            meter_type,
+            base_consumption,
+            load_coeff_empty,
+            load_coeff_loaded,
+            load_coeff_heavy
+        FROM vehicles
+        WHERE id = %s
+    """, (vehicle_id,))
+
     if not vehicle:
         return render_page("Ошибка", "<p>Транспорт не найден.</p>")
 
     if request.method == "POST":
-        brand = request.form.get("brand", "").strip()
-        vehicle_type = request.form.get("vehicle_type", "").strip()
+        vehicle_name = request.form.get("vehicle_name", "").strip()
         plate_number = request.form.get("plate_number", "").strip().upper()
-        company_id = request.form.get("company_id") or None
+        meter_type = request.form.get("meter_type") or None
+        base_consumption = request.form.get("base_consumption") or None
+        load_coeff_empty = request.form.get("load_coeff_empty") or 1.00
+        load_coeff_loaded = request.form.get("load_coeff_loaded") or 1.15
+        load_coeff_heavy = request.form.get("load_coeff_heavy") or 1.30
 
         execute_query("""
             UPDATE vehicles
-            SET brand = %s,
-                vehicle_type = %s,
+            SET
+                vehicle_name = %s,
                 plate_number = %s,
-                company_id = %s
+                meter_type = %s,
+                base_consumption = %s,
+                load_coeff_empty = %s,
+                load_coeff_loaded = %s,
+                load_coeff_heavy = %s
             WHERE id = %s
-        """, (brand, vehicle_type, plate_number, company_id, vehicle_id))
+        """, (
+            vehicle_name,
+            plate_number,
+            meter_type,
+            base_consumption,
+            load_coeff_empty,
+            load_coeff_loaded,
+            load_coeff_heavy,
+            vehicle_id
+        ))
 
         return redirect("/vehicles")
 
-    companies = fetch_all("SELECT id, name FROM companies ORDER BY name")
+    speedometer_selected = "selected" if vehicle["meter_type"] == "speedometer" else ""
+    motohours_selected = "selected" if vehicle["meter_type"] == "motohours" else ""
 
-    content = "<h2>Редактировать транспорт</h2>"
-    content += "<form method='post'>"
+    content = f"""
+    <div style='max-width:700px; margin:0 auto;'>
+        <h2>Редактировать транспорт</h2>
 
-    content += "<label>Марка:</label><br>"
-    content += f"<input type='text' name='brand' value='{vehicle['brand'] or ''}' required><br><br>"
+        <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
 
-    content += "<label>Тип транспорта:</label><br>"
-    content += f"<input type='text' name='vehicle_type' value='{vehicle['vehicle_type'] or ''}' required><br><br>"
+            <div>
+                <label>Наименование транспорта:</label><br>
+                <input type='text' name='vehicle_name' value='{vehicle['vehicle_name'] or ''}' required
+                       style='width:100%; padding:8px;'>
+            </div>
 
-    content += "<label>Гос.номер:</label><br>"
-    content += f"<input type='text' name='plate_number' value='{vehicle['plate_number'] or ''}' required><br><br>"
+            <div>
+                <label>Гос.номер:</label><br>
+                <input type='text' name='plate_number' value='{vehicle['plate_number'] or ''}' required
+                       style='width:100%; padding:8px;'>
+            </div>
 
-    content += "<label>Компания:</label><br>"
-    content += "<select name='company_id' required>"
-    content += "<option value=''>-- Выберите --</option>"
-    for c in companies:
-        selected = "selected" if vehicle["company_id"] == c["id"] else ""
-        content += f"<option value='{c['id']}' {selected}>{c['name']}</option>"
-    content += "</select><br><br>"
+            <div>
+                <label>Тип учета:</label><br>
+                <select name='meter_type' required style='width:100%; padding:8px;'>
+                    <option value=''>-- Выберите --</option>
+                    <option value='speedometer' {speedometer_selected}>Спидометр</option>
+                    <option value='motohours' {motohours_selected}>Моточасы</option>
+                </select>
+            </div>
 
-    content += "<button type='submit'>Сохранить</button> "
-    content += "<a href='/vehicles'>Назад</a>"
+            <div>
+                <label>Базовая норма расхода:</label><br>
+                <input type='number' step='0.01' name='base_consumption'
+                       value='{vehicle['base_consumption'] or ""}'
+                       style='width:100%; padding:8px;'>
+                <small>Для спидометра: л/100 км, для моточасов: л/моточас</small>
+            </div>
 
-    content += "</form>"
+            <div>
+                <label>Коэффициент без груза:</label><br>
+                <input type='number' step='0.01' name='load_coeff_empty'
+                       value='{vehicle['load_coeff_empty'] or 1.00}'
+                       style='width:100%; padding:8px;'>
+            </div>
+
+            <div>
+                <label>Коэффициент с грузом:</label><br>
+                <input type='number' step='0.01' name='load_coeff_loaded'
+                       value='{vehicle['load_coeff_loaded'] or 1.15}'
+                       style='width:100%; padding:8px;'>
+            </div>
+
+            <div>
+                <label>Коэффициент тяжелых условий:</label><br>
+                <input type='number' step='0.01' name='load_coeff_heavy'
+                       value='{vehicle['load_coeff_heavy'] or 1.30}'
+                       style='width:100%; padding:8px;'>
+            </div>
+
+            <div style='margin-top:8px;'>
+                <button type='submit' style='padding:10px 16px;'>Сохранить</button>
+                <a href='/vehicles' style='margin-left:12px;'>Назад</a>
+            </div>
+
+        </form>
+    </div>
+    """
 
     return render_page("Редактировать транспорт", content)
