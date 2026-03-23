@@ -29,6 +29,7 @@ def vehicles_page():
         SELECT
             id,
             vehicle_name,
+            vehicle_type,
             plate_number,
             meter_type,
             base_consumption,
@@ -49,6 +50,7 @@ def vehicles_page():
             <tr>
                 <th>ID</th>
                 <th>Наименование транспорта</th>
+                <th>Тип транспорта</th>
                 <th>Гос.номер</th>
                 <th>Тип учета</th>
                 <th>Базовая норма</th>
@@ -67,6 +69,7 @@ def vehicles_page():
             <tr>
                 <td>{row['id']}</td>
                 <td>{row['vehicle_name'] or ''}</td>
+                <td>{row['vehicle_type'] or ''}</td>
                 <td>{row['plate_number'] or ''}</td>
                 <td>{meter_type_label(row['meter_type'])}</td>
                 <td>{base_text}</td>
@@ -89,6 +92,7 @@ def vehicles_page():
 def vehicles_new():
     if request.method == "POST":
         vehicle_name = request.form.get("vehicle_name", "").strip()
+        vehicle_type = request.form.get("vehicle_type", "").strip()
         plate_number = request.form.get("plate_number", "").strip().upper()
         meter_type = request.form.get("meter_type") or None
         base_consumption = request.form.get("base_consumption") or None
@@ -99,6 +103,7 @@ def vehicles_new():
         execute_query("""
             INSERT INTO vehicles (
                 vehicle_name,
+                vehicle_type,
                 plate_number,
                 meter_type,
                 base_consumption,
@@ -106,9 +111,10 @@ def vehicles_new():
                 load_coeff_loaded,
                 load_coeff_heavy
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             vehicle_name,
+            vehicle_type,
             plate_number,
             meter_type,
             base_consumption,
@@ -128,6 +134,12 @@ def vehicles_new():
             <div>
                 <label>Наименование транспорта:</label><br>
                 <input type='text' name='vehicle_name' required
+                       style='width:100%; padding:8px;'>
+            </div>
+
+            <div>
+                <label>Тип транспорта:</label><br>
+                <input type='text' name='vehicle_type'
                        style='width:100%; padding:8px;'>
             </div>
 
@@ -190,6 +202,7 @@ def vehicles_edit(vehicle_id):
         SELECT
             id,
             vehicle_name,
+            vehicle_type,
             plate_number,
             meter_type,
             base_consumption,
@@ -205,6 +218,7 @@ def vehicles_edit(vehicle_id):
 
     if request.method == "POST":
         vehicle_name = request.form.get("vehicle_name", "").strip()
+        vehicle_type = request.form.get("vehicle_type", "").strip()
         plate_number = request.form.get("plate_number", "").strip().upper()
         meter_type = request.form.get("meter_type") or None
         base_consumption = request.form.get("base_consumption") or None
@@ -216,6 +230,7 @@ def vehicles_edit(vehicle_id):
             UPDATE vehicles
             SET
                 vehicle_name = %s,
+                vehicle_type = %s,
                 plate_number = %s,
                 meter_type = %s,
                 base_consumption = %s,
@@ -225,6 +240,7 @@ def vehicles_edit(vehicle_id):
             WHERE id = %s
         """, (
             vehicle_name,
+            vehicle_type,
             plate_number,
             meter_type,
             base_consumption,
@@ -248,6 +264,12 @@ def vehicles_edit(vehicle_id):
             <div>
                 <label>Наименование транспорта:</label><br>
                 <input type='text' name='vehicle_name' value='{vehicle['vehicle_name'] or ''}' required
+                       style='width:100%; padding:8px;'>
+            </div>
+
+            <div>
+                <label>Тип транспорта:</label><br>
+                <input type='text' name='vehicle_type' value='{vehicle['vehicle_type'] or ''}'
                        style='width:100%; padding:8px;'>
             </div>
 
