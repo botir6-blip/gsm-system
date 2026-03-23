@@ -6,61 +6,85 @@ import json
 
 requests_bp = Blueprint("requests_bp", __name__)
 
-
 @requests_bp.route("/requests")
 @login_required
 def requests_page():
     rows = fetch_all("""
         SELECT
             r.id,
-            v.plate_number,
             o.name AS object_name,
+            v.plate_number,
+            v.vehicle_name,
             r.requested_liters,
             r.actual_liters,
             r.requested_by,
+            r.approved_by,
+            r.fueler_name,
+            r.controller_name,
             r.status,
-            r.created_at
+            r.created_at,
+            r.approved_at,
+            r.fueled_at,
+            r.checked_at
         FROM fuel_requests r
-        LEFT JOIN vehicles v ON v.id = r.vehicle_id
         LEFT JOIN objects o ON o.id = r.object_id
+        LEFT JOIN vehicles v ON v.id = r.vehicle_id
         ORDER BY r.id DESC
     """)
+
+    def status_label(status):
+        if status == "new":
+            return "Новая заявка"
+        if status == "approved":
+            return "Разрешена"
+        if status == "fueled":
+            return "Заправлена"
+        if status == "driver_confirmed":
+            return "Подтверждена водителем"
+        if status == "checked":
+            return "Проверена"
+        return status or ""
 
     content = "<h2>Заявки</h2>"
     content += "<p><a href='/requests/new'>➕ Новая заявка</a></p>"
 
     if rows:
-        content += """
-        <table border='1' cellpadding='8' cellspacing='0' style='border-collapse: collapse; width:100%;'>
-            <tr>
-                <th>ID</th>
-                <th>Транспорт</th>
-                <th>Объект</th>
-                <th>Запрошено</th>
-                <th>Факт</th>
-                <th>Подал</th>
-                <th>Статус</th>
-                <th>Дата</th>
-            </tr>
-        """
         for r in rows:
             content += f"""
-            <tr>
-                <td>{r['id']}</td>
-                <td>{r['plate_number'] or ''}</td>
-                <td>{r['object_name'] or ''}</td>
-                <td>{r['requested_liters'] or ''}</td>
-                <td>{r['actual_liters'] or ''}</td>
-                <td>{r['requested_by'] or ''}</td>
-                <td>{r['status'] or ''}</td>
-                <td>{r['created_at'] or ''}</td>
-            </tr>
+            <div style='border:1px solid #ddd; border-radius:10px; padding:12px; margin-bottom:12px; background:#fff;'>
+                <div style='display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;'>
+                    <div><b>Заявка №{r['id']}</b></div>
+                    <div><b>Статус:</b> {status_label(r['status'])}</div>
+                </div>
+
+                <div style='margin-top:8px; font-size:14px;'>
+                    <div><b>Объект:</b> {r['object_name'] or ''}</div>
+                    <div><b>Транспорт:</b> {(r['plate_number'] or '')} {(r['vehicle_name'] or '')}</div>
+                    <div><b>Запрошено:</b> {r['requested_liters'] or ''} л</div>
+                    <div><b>Фактически:</b> {r['actual_liters'] or ''} л</div>
+                </div>
+
+                <div style='margin-top:10px; padding:10px; background:#f8f8f8; border-radius:8px; font-size:14px;'>
+                    <div><b>1. Заявку подал:</b> {r['requested_by'] or '—'}</div>
+                    <div><b>2. Разрешил:</b> {r['approved_by'] or '—'}</div>
+                    <div><b>3. Заправил:</b> {r['fueler_name'] or '—'}</div>
+                    <div><b>4. Подтверждение водителя:</b> —</div>
+                    <div><b>5. Проверил:</b> {r['controller_name'] or '—'}</div>
+                </div>
+
+                <div style='margin-top:10px; font-size:13px; color:#555;'>
+                    <div><b>Создана:</b> {r['created_at'] or '—'}</div>
+                    <div><b>Разрешена:</b> {r['approved_at'] or '—'}</div>
+                    <div><b>Заправлена:</b> {r['fueled_at'] or '—'}</div>
+                    <div><b>Проверена:</b> {r['checked_at'] or '—'}</div>
+                </div>
+            </div>
             """
-        content += "</table>"
     else:
         content += "<p>Заявок пока нет.</p>"
 
     return render_page("Заявки", content)
+
 
 @requests_bp.route("/requests/new", methods=["GET", "POST"])
 @login_required
