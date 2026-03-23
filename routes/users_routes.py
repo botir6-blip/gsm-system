@@ -11,7 +11,7 @@ users_bp = Blueprint("users_bp", __name__)
 # =========================
 # USERS
 # =========================
-@app.route("/users", methods=["GET", "POST"])
+@users_bp.route("/users", methods=["GET", "POST"])
 @login_required
 @role_required("admin")
 def users_page():
@@ -24,12 +24,12 @@ def users_page():
 
         if not full_name or not username or not password or not role:
             flash("Заполните обязательные поля.", "error")
-            return redirect(url_for("users_page"))
+            return redirect(url_for("users_bp.users_page"))
 
         existing = fetch_one("SELECT * FROM users WHERE username=%s", (username,))
         if existing:
             flash("Такой логин уже существует.", "error")
-            return redirect(url_for("users_page"))
+            return redirect(url_for("users_bp.users_page"))
 
         execute_query("""
             INSERT INTO users (full_name, username, password_hash, role, company_id, is_active)
@@ -43,7 +43,7 @@ def users_page():
         ))
 
         flash("Пользователь создан.", "success")
-        return redirect(url_for("users_page"))
+        return redirect(url_for("users_bp.users_page"))
 
     companies = fetch_all("SELECT * FROM companies ORDER BY name")
     users = fetch_all("""
@@ -119,14 +119,14 @@ def users_page():
     return render_page("Пользователи", content)
 
 
-@app.route("/users/edit/<int:user_id>", methods=["GET", "POST"])
+@users_bp.route("/users/edit/<int:user_id>", methods=["GET", "POST"])
 @login_required
 @role_required("admin")
 def edit_user(user_id):
     user_row = fetch_one("SELECT * FROM users WHERE id=%s", (user_id,))
     if not user_row:
         flash("Пользователь не найден.", "error")
-        return redirect(url_for("users_page"))
+        return redirect(url_for("users_bp.users_page"))
 
     companies = fetch_all("SELECT * FROM companies ORDER BY name")
 
@@ -140,12 +140,12 @@ def edit_user(user_id):
 
         if not full_name or not username or not role:
             flash("Заполните обязательные поля.", "error")
-            return redirect(url_for("edit_user", user_id=user_id))
+            return redirect(url_for("users_bp.edit_user", user_id=user_id))
 
         existing = fetch_one("SELECT * FROM users WHERE username=%s AND id<>%s", (username, user_id))
         if existing:
             flash("Другой пользователь с таким логином уже существует.", "error")
-            return redirect(url_for("edit_user", user_id=user_id))
+            return redirect(url_for("users_bp.edit_user", user_id=user_id))
 
         if password:
             execute_query("""
@@ -165,7 +165,7 @@ def edit_user(user_id):
             ))
 
         flash("Пользователь обновлен.", "success")
-        return redirect(url_for("users_page"))
+        return redirect(url_for("users_bp.users_page"))
 
     company_options = "".join([
         f"<option value='{c['id']}' {'selected' if c['id'] == user_row['company_id'] else ''}>{c['name']}</option>"
