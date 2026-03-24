@@ -89,6 +89,11 @@ def normalize_approval_type(value):
         return "external"
     return "internal"
 
+def can_check_request(row):
+    if not is_controller():
+        return False
+    return (row.get("status") or "") in ["fueled", "driver_confirmed"]
+
 
 def can_see_request_row(row):
     status = (row.get("status") or "").strip()
@@ -745,6 +750,34 @@ def request_detail(request_id):
         </div>
         """
 
+    if can_check_request(r):
+        content += f"""
+        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
+            <h3 style='margin-top:0;'>Контроль</h3>
+
+            <form method='post' action='/requests/{r["id"]}/check'>
+                <div style='margin-bottom:10px;'>
+                    <label><b>Фактически отпущено:</b></label><br>
+                    <input type='text' value='{r["actual_liters"] or ""} л' disabled
+                           style='width:100%; padding:8px; background:#f5f5f5;'>
+                </div>
+
+                <div style='margin-bottom:10px;'>
+                    <label><b>Комментарий контролёра:</b></label><br>
+                    <textarea name='check_comment' rows='4'
+                              style='width:100%; padding:8px;'></textarea>
+                </div>
+
+                <div>
+                    <button type='submit'
+                            style='padding:10px 14px; border:none; border-radius:8px; background:#2e7d32; color:white;'>
+                        Проверено / Закрыть
+                    </button>
+                </div>
+            </form>
+        </div>
+        """
+
     content += "</div>"
 
     return render_page(f"Заявка №{request_id}", content)
@@ -858,3 +891,37 @@ def request_fuel(request_id):
     ))
 
     return redirect(f"/requests/{request_id}")
+
+@requests_bp.route("/requests/<int:request_id>/check", methods=["POST"])
+@login_required
+def request_check(request_id):
+    req = fetch_one("""
+        SELECT id, status
+        FROM fuel_requests
+        WHERE id = %s
+    """, (request_id,))
+
+    if not req:
+        return render_page("Ошибка", "<p>Заявка не найдена.</p>")
+
+    if not can_check_request(req):
+        return render_page("Доступ запрещен", "<p>У вас нет прав на проверку этой заявки.</p>")
+
+    controller_name = current_user_name()
+    check_comment = request.form.get("check_comment") or ""
+
+    execute_query("""
+        UPDATE fuel_requests
+        SET
+            status = 'checked',
+            controller_name = %s,
+            checked_at = CURRENT_TIMESTAMP,
+            check_comment = %s
+        WHERE id = %s
+    """, (
+        controller_name,
+        check_comment,
+        request_id
+    ))
+
+    return redirect("/requests")
