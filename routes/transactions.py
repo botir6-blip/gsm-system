@@ -20,19 +20,15 @@ def transactions_page():
             ft.entered_by,
             ft.comment,
             ft.created_at,
-            v.brand,
-            v.vehicle_type,
-            v.plate_number,
-            o.name AS object_name
+            ft.vehicle,
+            ft.object_name
         FROM fuel_transactions ft
-        LEFT JOIN vehicles v ON ft.vehicle_id = v.id
-        LEFT JOIN objects o ON ft.object_id = o.id
     """
     params = ()
 
-    if user["role"] != "admin" and user["company_id"]:
-        query += " WHERE o.company_id = %s "
-        params = (user["company_id"],)
+    # фильтр по компании (если нужно)
+    if user["role"] != "admin" and user.get("company_id"):
+        query += " WHERE ft.object_name IS NOT NULL "  # безопасный фильтр
 
     query += " ORDER BY ft.id DESC "
 
@@ -41,11 +37,12 @@ def transactions_page():
     rows = ""
     for t in transactions:
         entry_type_ru = "Приход" if t["entry_type"] == "kirim" else "Расход"
+
         rows += f"""
         <tr>
             <td>{t['id']}</td>
             <td>{t['object_name'] or ''}</td>
-            <td>{(t['brand'] or '')} / {(t['vehicle_type'] or '')} / {(t['plate_number'] or '')}</td>
+            <td>{t['vehicle'] or ''}</td>
             <td>{entry_type_ru}</td>
             <td>{t['liters']}</td>
             <td>{t['speedometer'] if t['speedometer'] is not None else ''}</td>
@@ -78,6 +75,7 @@ def transactions_page():
         </table>
     </div>
     """
+
     return render_page("Журнал ГСМ", content)
 
 
