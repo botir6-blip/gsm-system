@@ -1,4 +1,3 @@
-import json
 from flask import Blueprint, request, redirect, session
 from auth import login_required, current_user
 from layout import render_page
@@ -32,26 +31,30 @@ def current_role():
 
 
 def is_admin():
-    return current_role() == "Администратор"
+    role = current_role()
+    return role in ["Администратор", "admin"]
 
 
 def is_request_initiator():
-    return current_role() == "Инициатор заявки"
+    role = current_role()
+    return role in ["Инициатор заявки", "initiator", "dispatcher"]
 
 
 def is_internal_approver():
     role = current_role()
-    return (
-        role == "Согласующий по внутреннему транспорту"
-        or role == "internal_approver"
-    )
+    return role in [
+        "Согласующий по внутреннему транспорту",
+        "internal_approver"
+    ]
+
 
 def is_external_approver():
     role = current_role()
-    return (
-        role == "Согласующий по стороннему транспорту"
-        or role == "external_approver"
-    )
+    return role in [
+        "Согласующий по стороннему транспорту",
+        "external_approver"
+    ]
+
 
 def can_create_request():
     return is_admin() or is_request_initiator()
@@ -101,7 +104,7 @@ def status_label(status):
     if status == "new":
         return "Новая"
     if status == "approved":
-        return "Разрешена"
+        return "Согласована"
     if status == "fueled":
         return "Заправлена"
     if status == "driver_confirmed":
@@ -220,9 +223,9 @@ def requests_page():
                 norm_text = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
 
             approval_type_label = (
-                "Сторонний"
+                "Сторонний транспорт"
                 if normalize_approval_type(r["approval_type"]) == "external"
-                else "Внутренний"
+                else "Внутренний транспорт"
             )
 
             approve_btn = ""
@@ -266,7 +269,7 @@ def requests_page():
 @login_required
 def new_request():
     if not can_create_request():
-        return render_page("Доступ запрещен", "<p>Сизга янги заявка яратиш рухсат этилмаган.</p>")
+        return render_page("Доступ запрещен", "<p>У вас нет прав на создание заявки.</p>")
 
     if request.method == "POST":
         object_name = (request.form.get("object_name") or "").strip()
@@ -308,13 +311,19 @@ def new_request():
         if not obj:
             return render_page(
                 "Ошибка",
-                "<p>Объект рўйхатдан танланмади. Орқага қайтиб, объектни қидирувдан танланг.</p>"
+                "<p>Объект не выбран из списка. Вернитесь назад и выберите объект из поиска.</p>"
             )
 
         if not veh:
             return render_page(
                 "Ошибка",
-                "<p>Транспорт рўйхатдан танланмади. Орқага қайтиб, транспортни қидирувдан танланг.</p>"
+                "<p>Транспорт не выбран из списка. Вернитесь назад и выберите транспорт из поиска.</p>"
+            )
+
+        if not fuel_supplier:
+            return render_page(
+                "Ошибка",
+                "<p>Выберите компанию, за чей счет выдается топливо.</p>"
             )
 
         full_comment = f"""Остаток в баке: {tank_balance}
@@ -466,9 +475,9 @@ def new_request():
             </div>
 
             <div>
-                <label><b>9. За чей счет топливо:</b></label><br>
-                <select name='fuel_supplier' style='width:100%; padding:8px;'>
-                    <option value=''>-- Выберите --</option>
+                <label><b>9. За чей счет выдается топливо:</b></label><br>
+                <select name='fuel_supplier' style='width:100%; padding:8px;' required>
+                    <option value=''>-- Выберите компанию --</option>
     """
 
     for c in companies:
@@ -521,7 +530,7 @@ def request_detail(request_id):
         return render_page("Ошибка", "<p>Заявка не найдена.</p>")
 
     if not can_see_request_row(r):
-        return render_page("Доступ запрещен", "<p>Сизда бу заявкани кўриш ҳуқуқи йўқ.</p>")
+        return render_page("Доступ запрещен", "<p>У вас нет прав на просмотр этой заявки.</p>")
 
     transport = f"{r['plate_number'] or ''} {r['vehicle_name'] or ''}".strip()
     base_norm = "—"
@@ -529,9 +538,9 @@ def request_detail(request_id):
         base_norm = f"{r['base_consumption']} {meter_unit(r['meter_type'])}"
 
     approval_type_label = (
-        "Сторонний"
+        "Сторонний транспорт"
         if normalize_approval_type(r["approval_type"]) == "external"
-        else "Внутренний"
+        else "Внутренний транспорт"
     )
 
     content = f"""
@@ -560,10 +569,31 @@ def request_detail(request_id):
                 <tr><td style='padding:6px;'><b>Запрошено топлива</b></td><td style='padding:6px;'>{r['requested_liters'] or '—'} л</td></tr>
                 <tr><td style='padding:6px;'><b>Разрешено</b></td><td style='padding:6px;'>{r['approved_liters'] or '—'} л</td></tr>
                 <tr><td style='padding:6px;'><b>Фактически отпущено</b></td><td style='padding:6px;'>{r['actual_liters'] or '—'} л</td></tr>
-                <tr><td style='padding:6px;'><b>За чей счет топливо</b></td><td style='padding:6px;'>{r['fuel_supplier'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>За чей счет выдается топливо</b></td><td style='padding:6px;'>{r['fuel_supplier'] or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Тип согласования</b></td><td style='padding:6px;'>{approval_type_label}</td></tr>
                 <tr><td style='padding:6px;'><b>Проект</b></td><td style='padding:6px;'>{r['project_name'] or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Комментарий</b></td><td style='padding:6px;'>{r['request_comment'] or '—'}</td></tr>
+            </table>
+        </div>
+
+        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
+            <h3 style='margin-top:0;'>Ход согласования</h3>
+            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
+                <tr><td style='padding:6px; width:260px;'><b>Заявку подал</b></td><td style='padding:6px;'>{r['requested_by'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Согласовал</b></td><td style='padding:6px;'>{r['approved_by'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Заправил</b></td><td style='padding:6px;'>{r['fueler_name'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Подтверждение водителя</b></td><td style='padding:6px;'>{"—" if "driver_name" not in r.keys() else (r["driver_name"] or "—")}</td></tr>
+                <tr><td style='padding:6px;'><b>Проверил</b></td><td style='padding:6px;'>{r['controller_name'] or '—'}</td></tr>
+            </table>
+        </div>
+
+        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
+            <h3 style='margin-top:0;'>Даты</h3>
+            <table style='width:100%; border-collapse:collapse; font-size:14px;'>
+                <tr><td style='padding:6px; width:260px;'><b>Создана</b></td><td style='padding:6px;'>{r['created_at'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Согласована</b></td><td style='padding:6px;'>{r['approved_at'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Заправлена</b></td><td style='padding:6px;'>{r['fueled_at'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Проверена</b></td><td style='padding:6px;'>{r['checked_at'] or '—'}</td></tr>
             </table>
         </div>
     """
@@ -588,7 +618,7 @@ def request_detail(request_id):
                 </div>
 
                 <div style='margin-bottom:10px;'>
-                    <label><b>За чей счет топливо:</b></label><br>
+                    <label><b>За чей счет выдается топливо:</b></label><br>
                     <input type='text' name='fuel_supplier'
                            value='{r["fuel_supplier"] or ""}'
                            style='width:100%; padding:8px;'
@@ -598,13 +628,13 @@ def request_detail(request_id):
                 <div style='margin-bottom:10px;'>
                     <label><b>Тип согласования:</b></label><br>
                     <select name='approval_type' style='width:100%; padding:8px;'>
-                        <option value='internal' {"selected" if normalize_approval_type(r["approval_type"]) == "internal" else ""}>Внутреннее</option>
-                        <option value='external' {"selected" if normalize_approval_type(r["approval_type"]) == "external" else ""}>Внешнее</option>
+                        <option value='internal' {"selected" if normalize_approval_type(r["approval_type"]) == "internal" else ""}>Внутренний транспорт</option>
+                        <option value='external' {"selected" if normalize_approval_type(r["approval_type"]) == "external" else ""}>Сторонний транспорт</option>
                     </select>
                 </div>
 
                 <div style='margin-bottom:10px;'>
-                    <label><b>Комментарий руководителя:</b></label><br>
+                    <label><b>Комментарий согласующего:</b></label><br>
                     <textarea name='approval_comment' rows='4'
                               style='width:100%; padding:8px;'></textarea>
                 </div>
@@ -612,12 +642,12 @@ def request_detail(request_id):
                 <div style='display:flex; gap:8px; flex-wrap:wrap;'>
                     <button type='submit' name='decision' value='approve'
                             style='padding:10px 14px; border:none; border-radius:8px; background:#1565c0; color:white;'>
-                        Разрешить
+                        Согласовать
                     </button>
 
                     <button type='submit' name='decision' value='approve_adjusted'
                             style='padding:10px 14px; border:none; border-radius:8px; background:#ef6c00; color:white;'>
-                        Разрешить с корректировкой
+                        Согласовать с корректировкой
                     </button>
 
                     <button type='submit' name='decision' value='reject'
@@ -651,7 +681,7 @@ def request_decision(request_id):
         return render_page("Ошибка", "<p>Заявка не найдена.</p>")
 
     if not can_approve_request(req):
-        return render_page("Доступ запрещен", "<p>Сизда бу заявкани согласовать қилиш ҳуқуқи йўқ.</p>")
+        return render_page("Доступ запрещен", "<p>У вас нет прав на согласование этой заявки.</p>")
 
     if req["status"] != "new":
         return redirect(f"/requests/{request_id}")
