@@ -30,6 +30,13 @@ def current_role():
     return str(user.get("role") or "").strip()
 
 
+def current_company_id():
+    user = current_user()
+    if user and user.get("company_id") is not None:
+        return user.get("company_id")
+    return session.get("company_id")
+
+
 def is_admin():
     role = (current_role() or "").strip().lower()
     return role in ["администратор", "admin"]
@@ -92,10 +99,58 @@ def normalize_approval_type(value):
     return "internal"
 
 
+def request_company_ids(row):
+    return {
+        row.get("object_company_id"),
+        row.get("vehicle_company_id"),
+        row.get("fuel_supplier_company_id"),
+    }
+
+
+def company_matches_request(row):
+    if is_admin():
+        return True
+
+    company_id = current_company_id()
+    if not company_id:
+        return False
+
+    return company_id in request_company_ids(row)
+
+
+def object_company_matches(row):
+    if is_admin():
+        return True
+
+    company_id = current_company_id()
+    if not company_id:
+        return False
+
+    return company_id == row.get("object_company_id")
+
+
+def fuel_supplier_company_matches(row):
+    if is_admin():
+        return True
+
+    company_id = current_company_id()
+    if not company_id:
+        return False
+
+    supplier_company_id = row.get("fuel_supplier_company_id")
+    if supplier_company_id is None:
+        return False
+
+    return company_id == supplier_company_id
+
+
 def can_check_request(row):
     if not is_controller():
         return False
+    if not company_matches_request(row):
+        return False
     return (row.get("status") or "") in ["fueled", "driver_confirmed"]
+
 
 def can_see_request_row(row):
     status = (row.get("status") or "").strip()
@@ -104,29 +159,37 @@ def can_see_request_row(row):
     if status == "checked":
         return False
 
+    if not company_matches_request(row):
+        return False
+
     if is_admin():
         return True
+
+    if is_internal_approver():
+        return status == "new" and approval_type == "internal" and object_company_matches(row)
+
+    if is_external_approver():
+        return status == "new" and approval_type == "external" and object_company_matches(row)
 
     if is_request_initiator():
         return status in ["new", "approved", "fueled", "driver_confirmed", "rejected"]
 
-    if is_internal_approver():
-        return status in ["new", "approved"] and approval_type == "internal"
-
-    if is_external_approver():
-        return status in ["new", "approved"] and approval_type == "external"
-
     if is_fuel_operator():
-        return status in ["approved", "fueled"]
+        if row.get("fuel_supplier_company_id") is not None:
+            return status in ["approved", "fueled"] and fuel_supplier_company_matches(row)
+        return status in ["approved", "fueled"] and company_matches_request(row)
 
     if is_controller():
-        return status in ["fueled", "driver_confirmed"]
+        return status in ["fueled", "driver_confirmed"] and company_matches_request(row)
 
     return False
 
 
 def can_approve_request(row):
     if (row.get("status") or "") != "new":
+        return False
+
+    if not object_company_matches(row):
         return False
 
     approval_type = normalize_approval_type(row.get("approval_type"))
@@ -143,7 +206,13 @@ def can_approve_request(row):
 def can_fuel_request(row):
     if not is_fuel_operator():
         return False
-    return (row.get("status") or "") == "approved"
+    if (row.get("status") or "") != "approved":
+        return False
+
+    if row.get("fuel_supplier_company_id") is not None:
+        return fuel_supplier_company_matches(row)
+
+    return company_matches_request(row)
 
 
 def status_label(status):
@@ -215,6 +284,7 @@ def requests_page():
         SELECT
             r.id,
             o.name AS object_name,
+            o.company_id AS object_company_id,
             v.plate_number,
             v.vehicle_name,
             v.vehicle_type,
@@ -223,6 +293,7 @@ def requests_page():
             v.load_coeff_empty,
             v.load_coeff_loaded,
             v.load_coeff_heavy,
+            v.company_id AS vehicle_company_id,
             r.requested_liters,
             r.approved_liters,
             r.actual_liters,
@@ -234,10 +305,12 @@ def requests_page():
             r.created_at,
             r.project_name,
             r.fuel_supplier,
+            fc.id AS fuel_supplier_company_id,
             COALESCE(r.approval_type, 'internal') AS approval_type
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
+        LEFT JOIN companies fc ON fc.name = r.fuel_supplier
         WHERE COALESCE(r.status, 'new') <> 'checked'
         ORDER BY r.id DESC
     """)
@@ -350,7 +423,7 @@ def new_request():
         approval_type = normalize_approval_type(request.form.get("approval_type"))
 
         obj = fetch_one("""
-            SELECT id, name
+            SELECT id, name, company_id
             FROM objects
             WHERE name = %s
             LIMIT 1
@@ -361,7 +434,8 @@ def new_request():
                 id,
                 vehicle_name,
                 vehicle_type,
-                plate_number
+                plate_number,
+                company_id
             FROM vehicles
             WHERE CONCAT(
                 COALESCE(plate_number, ''),
@@ -576,6 +650,7 @@ def request_detail(request_id):
         SELECT
             r.*,
             o.name AS object_name,
+            o.company_id AS object_company_id,
             v.plate_number,
             v.vehicle_name,
             v.vehicle_type,
@@ -584,10 +659,13 @@ def request_detail(request_id):
             v.load_coeff_empty,
             v.load_coeff_loaded,
             v.load_coeff_heavy,
+            v.company_id AS vehicle_company_id,
+            fc.id AS fuel_supplier_company_id,
             COALESCE(r.approval_type, 'internal') AS approval_type
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
+        LEFT JOIN companies fc ON fc.name = r.fuel_supplier
         WHERE r.id = %s
     """, (request_id,))
 
@@ -812,12 +890,14 @@ def request_detail(request_id):
 def request_decision(request_id):
     req = fetch_one("""
         SELECT
-            id,
-            status,
-            requested_liters,
-            COALESCE(approval_type, 'internal') AS approval_type
-        FROM fuel_requests
-        WHERE id = %s
+            r.id,
+            r.status,
+            r.requested_liters,
+            COALESCE(r.approval_type, 'internal') AS approval_type,
+            o.company_id AS object_company_id
+        FROM fuel_requests r
+        LEFT JOIN objects o ON o.id = r.object_id
+        WHERE r.id = %s
     """, (request_id,))
 
     if not req:
@@ -882,13 +962,19 @@ def request_decision(request_id):
 def request_fuel(request_id):
     req = fetch_one("""
         SELECT
-            id,
-            status,
-            requested_liters,
-            approved_liters,
-            COALESCE(approval_type, 'internal') AS approval_type
-        FROM fuel_requests
-        WHERE id = %s
+            r.id,
+            r.status,
+            r.requested_liters,
+            r.approved_liters,
+            COALESCE(r.approval_type, 'internal') AS approval_type,
+            o.company_id AS object_company_id,
+            v.company_id AS vehicle_company_id,
+            fc.id AS fuel_supplier_company_id
+        FROM fuel_requests r
+        LEFT JOIN objects o ON o.id = r.object_id
+        LEFT JOIN vehicles v ON v.id = r.vehicle_id
+        LEFT JOIN companies fc ON fc.name = r.fuel_supplier
+        WHERE r.id = %s
     """, (request_id,))
 
     if not req:
@@ -925,14 +1011,16 @@ def request_check(request_id):
             r.id,
             r.status,
             r.actual_liters,
-            r.vehicle_id,
-            r.object_id,
             o.name AS object_name,
+            o.company_id AS object_company_id,
             v.plate_number,
-            v.vehicle_name
+            v.vehicle_name,
+            v.company_id AS vehicle_company_id,
+            fc.id AS fuel_supplier_company_id
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
+        LEFT JOIN companies fc ON fc.name = r.fuel_supplier
         WHERE r.id = %s
     """, (request_id,))
 
