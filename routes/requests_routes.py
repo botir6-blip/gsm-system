@@ -31,32 +31,33 @@ def current_role():
 
 
 def is_admin():
-    role = current_role()
-    return role in ["Администратор", "admin"]
+    role = (current_role() or "").strip().lower()
+    return role in ["администратор", "admin"]
 
 
 def is_request_initiator():
-    role = current_role()
+    role = (current_role() or "").strip().lower()
     return role in [
-        "Инициатор заявки",
+        "инициатор заявки",
         "initiator",
         "request_initiator",
         "dispatcher",
+        "requester",
     ]
 
 
 def is_internal_approver():
-    role = current_role()
+    role = (current_role() or "").strip().lower()
     return role in [
-        "Согласующий по внутреннему транспорту",
+        "согласующий по внутреннему транспорту",
         "internal_approver",
     ]
 
 
 def is_external_approver():
-    role = current_role()
+    role = (current_role() or "").strip().lower()
     return role in [
-        "Согласующий по стороннему транспорту",
+        "согласующий по стороннему транспорту",
         "external_approver",
     ]
 
@@ -72,9 +73,10 @@ def is_fuel_operator():
 
 
 def is_controller():
-    role = current_role()
+    role = (current_role() or "").strip().lower()
     return role in [
-        "Контролёр",
+        "контролёр",
+        "контролер",
         "controller",
     ]
 
@@ -88,6 +90,7 @@ def normalize_approval_type(value):
     if v == "external":
         return "external"
     return "internal"
+
 
 def can_check_request(row):
     if not is_controller():
@@ -278,10 +281,8 @@ def requests_page():
             elif can_fuel_request(r):
                 action_btn = f"<a href='/requests/{r['id']}' style='margin-left:8px;'>Заправить</a>"
 
-            row_bg = "background:#e8f5e9;" if r["status"] == "checked" else ""
-
             content += f"""
-            <tr style='{row_bg}'>
+            <tr>
                 <td>{r['id']}</td>
                 <td>
                     <span style='display:inline-block; padding:3px 8px; border-radius:999px; color:#fff; background:{status_color(r["status"])};'>
@@ -892,6 +893,7 @@ def request_fuel(request_id):
 
     return redirect(f"/requests/{request_id}")
 
+
 @requests_bp.route("/requests/<int:request_id>/check", methods=["POST"])
 @login_required
 def request_check(request_id):
@@ -915,7 +917,6 @@ def request_check(request_id):
     controller_name = current_user_name()
     check_comment = request.form.get("check_comment") or ""
 
-    # ✅ 1. Заявкани закрываем
     execute_query("""
         UPDATE fuel_requests
         SET
@@ -930,7 +931,6 @@ def request_check(request_id):
         request_id
     ))
 
-    # ✅ 2. ЖУРНАЛГА ҚЎШАМИЗ (ЭНГ МУҲИМ)
     execute_query("""
         INSERT INTO fuel_transactions (
             vehicle_id,
@@ -946,9 +946,9 @@ def request_check(request_id):
     """, (
         req["vehicle_id"],
         req["object_id"],
-        "chiqim",  # расход
+        "chiqim",
         req["actual_liters"] or 0,
-        None,  # кейин қўшамиз (спидометр)
+        None,
         controller_name,
         check_comment
     ))
