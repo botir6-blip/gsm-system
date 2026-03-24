@@ -62,11 +62,12 @@ def is_external_approver():
 
 
 def is_fuel_operator():
-    role = current_role()
+    role = (current_role() or "").strip().lower()
     return role in [
-        "Оператор заправки",
+        "оператор заправки",
         "fuel_operator",
         "operator",
+        "fueler",
     ]
 
 
