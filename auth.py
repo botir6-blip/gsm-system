@@ -45,7 +45,7 @@ def login_required(fn):
     def wrapper(*args, **kwargs):
         if not current_user():
             flash("Сначала войдите в систему.", "error")
-            return redirect(url_for("login"))
+            return redirect(url_for("auth_bp.login"))
         return fn(*args, **kwargs)
     return wrapper
 
@@ -58,9 +58,11 @@ def role_required(*roles):
             if not user:
                 flash("Сначала войдите в систему.", "error")
                 return redirect(url_for("auth_bp.login"))
+
             if user["role"] not in roles:
                 flash("У вас нет доступа к этому разделу.", "error")
-                return redirect(url_for("index"))
+                return redirect(url_for("dashboard_bp.index"))
+
             return fn(*args, **kwargs)
         return wrapper
     return decorator
