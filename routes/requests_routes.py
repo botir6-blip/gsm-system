@@ -36,13 +36,13 @@ def is_admin():
 
 
 def is_request_initiator():
-    role = current_role()
-    return role in [
-        "Инициатор заявки",
-        "initiator",
-        "request_initiator",
-        "dispatcher"
-    ]
+    role = current_role().lower()
+    return (
+        role == "инициатор заявки"
+        or role == "initiator"
+        or role == "request_initiator"
+        or role == "dispatcher"
+    )
 
 
 def is_internal_approver():
@@ -62,7 +62,7 @@ def is_external_approver():
 
 
 def can_create_request():
-    return is_admin() or is_request_initiator()
+    return is_request_initiator()
 
 
 def normalize_approval_type(value):
