@@ -332,7 +332,7 @@ def render_page(title, content):
         <div class="userbox">
             <b>{user['full_name']}</b><br>
             Логин: {user['username']} |
-            Роль: {user['role']} |
+            Роль: {role_ru(user['role'])} |
             Компания: {user['company_name'] or '-'}
         </div>
         """
@@ -347,6 +347,17 @@ def render_page(title, content):
         user_box=user_box
     )
 
+def role_ru(role):
+    mapping = {
+        "admin": "Администратор",
+        "requester": "Инициатор заявки",
+        "internal_approver": "Согласующий (внутренний)",
+        "external_approver": "Согласующий (внешний)",
+        "fueler": "Оператор заправки",
+        "controller": "Контролёр",
+        "ats_operator": "АТС оператор",
+    }
+    return mapping.get(role, role)
 
 def status_badge(status):
     labels = {
