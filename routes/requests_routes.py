@@ -23,6 +23,13 @@ def current_user_name():
     )
 
 
+def current_user_id():
+    user = current_user()
+    if user and user.get("id") is not None:
+        return user.get("id")
+    return session.get("user_id")
+
+
 def current_role():
     user = current_user()
     if not user:
@@ -144,10 +151,21 @@ def fuel_supplier_company_matches(row):
     return company_id == supplier_company_id
 
 
+def station_matches_request(row):
+    if is_admin():
+        return True
+
+    user_id = current_user_id()
+    if not user_id:
+        return False
+
+    return row.get("station_responsible_user_id") == user_id
+
+
 def can_check_request(row):
     if not is_controller():
         return False
-    if not company_matches_request(row):
+    if not station_matches_request(row):
         return False
     return (row.get("status") or "") in ["fueled", "driver_confirmed"]
 
@@ -159,11 +177,11 @@ def can_see_request_row(row):
     if status == "checked":
         return False
 
-    if not company_matches_request(row):
-        return False
-
     if is_admin():
         return True
+
+    if not (company_matches_request(row) or station_matches_request(row)):
+        return False
 
     if is_internal_approver():
         return status == "new" and approval_type == "internal" and object_company_matches(row)
@@ -175,12 +193,10 @@ def can_see_request_row(row):
         return status in ["new", "approved", "fueled", "driver_confirmed", "rejected"]
 
     if is_fuel_operator():
-        if row.get("fuel_supplier_company_id") is not None:
-            return status in ["approved", "fueled"] and fuel_supplier_company_matches(row)
-        return status in ["approved", "fueled"] and company_matches_request(row)
+        return status in ["approved", "fueled"] and station_matches_request(row)
 
     if is_controller():
-        return status in ["fueled", "driver_confirmed"] and company_matches_request(row)
+        return status in ["fueled", "driver_confirmed"] and station_matches_request(row)
 
     return False
 
@@ -208,11 +224,7 @@ def can_fuel_request(row):
         return False
     if (row.get("status") or "") != "approved":
         return False
-
-    if row.get("fuel_supplier_company_id") is not None:
-        return fuel_supplier_company_matches(row)
-
-    return company_matches_request(row)
+    return station_matches_request(row)
 
 
 def status_label(status):
@@ -305,12 +317,16 @@ def requests_page():
             r.created_at,
             r.project_name,
             r.fuel_supplier,
+            r.fuel_station_id,
+            fs.name AS fuel_station_name,
+            fs.responsible_user_id AS station_responsible_user_id,
             fc.id AS fuel_supplier_company_id,
             COALESCE(r.approval_type, 'internal') AS approval_type
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
         LEFT JOIN companies fc ON fc.name = r.fuel_supplier
+        LEFT JOIN fuel_stations fs ON fs.id = r.fuel_station_id
         WHERE COALESCE(r.status, 'new') <> 'checked'
         ORDER BY r.id DESC
     """)
@@ -340,6 +356,7 @@ def requests_page():
                 <th>ID</th>
                 <th>Статус</th>
                 <th>Объект</th>
+                <th>Заправка</th>
                 <th>Транспорт</th>
                 <th>Норма</th>
                 <th>Запрос</th>
@@ -383,6 +400,7 @@ def requests_page():
                     </div>
                 </td>
                 <td>{r['object_name'] or '—'}</td>
+                <td>{r['fuel_station_name'] or '—'}</td>
                 <td>{transport or '—'}</td>
                 <td>{norm_text or '—'}</td>
                 <td>{r['requested_liters'] or '—'} л{fact_text}</td>
@@ -417,6 +435,7 @@ def new_request():
         requested_by = request.form.get("requested_by") or ""
         project_name = request.form.get("project_name") or ""
         fuel_supplier = request.form.get("fuel_supplier") or ""
+        fuel_station_id = request.form.get("fuel_station_id") or None
         tank_balance = request.form.get("tank_balance") or ""
         route_work = request.form.get("route_work") or ""
         comment = request.form.get("comment") or ""
@@ -465,6 +484,12 @@ def new_request():
                 "<p>Выберите компанию, за чей счет выдается топливо.</p>"
             )
 
+        if not fuel_station_id:
+            return render_page(
+                "Ошибка",
+                "<p>Выберите заправку.</p>"
+            )
+
         full_comment = f"""Остаток в баке: {tank_balance}
 Маршрут / объем работ: {route_work}
 Комментарий: {comment}"""
@@ -477,11 +502,12 @@ def new_request():
                 requested_by,
                 project_name,
                 fuel_supplier,
+                fuel_station_id,
                 request_comment,
                 approval_type,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'new')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'new')
         """, (
             obj["id"],
             veh["id"],
@@ -489,6 +515,7 @@ def new_request():
             requested_by,
             project_name,
             fuel_supplier,
+            fuel_station_id,
             full_comment,
             approval_type
         ))
@@ -520,6 +547,12 @@ def new_request():
     companies = fetch_all("""
         SELECT id, name
         FROM companies
+        ORDER BY name
+    """)
+
+    stations = fetch_all("""
+        SELECT id, name
+        FROM fuel_stations
         ORDER BY name
     """)
 
@@ -627,7 +660,20 @@ def new_request():
             </div>
 
             <div>
-                <label><b>10. Комментарий:</b></label><br>
+                <label><b>10. Заправка:</b></label><br>
+                <select name='fuel_station_id' style='width:100%; padding:8px;' required>
+                    <option value=''>-- Выберите заправку --</option>
+    """
+
+    for s in stations:
+        content += f"<option value='{s['id']}'>{s['name']}</option>"
+
+    content += """
+                </select>
+            </div>
+
+            <div>
+                <label><b>11. Комментарий:</b></label><br>
                 <textarea name='comment' rows='4' style='width:100%; padding:8px;'></textarea>
             </div>
 
@@ -661,11 +707,14 @@ def request_detail(request_id):
             v.load_coeff_heavy,
             v.company_id AS vehicle_company_id,
             fc.id AS fuel_supplier_company_id,
+            fs.name AS fuel_station_name,
+            fs.responsible_user_id AS station_responsible_user_id,
             COALESCE(r.approval_type, 'internal') AS approval_type
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
         LEFT JOIN companies fc ON fc.name = r.fuel_supplier
+        LEFT JOIN fuel_stations fs ON fs.id = r.fuel_station_id
         WHERE r.id = %s
     """, (request_id,))
 
@@ -711,6 +760,7 @@ def request_detail(request_id):
 
             <table style='width:100%; border-collapse:collapse; font-size:14px;'>
                 <tr><td style='padding:6px; width:260px;'><b>Объект заправки</b></td><td style='padding:6px;'>{r['object_name'] or '—'}</td></tr>
+                <tr><td style='padding:6px;'><b>Заправка</b></td><td style='padding:6px;'>{r['fuel_station_name'] or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Транспорт</b></td><td style='padding:6px;'>{transport or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Тип транспорта</b></td><td style='padding:6px;'>{r['vehicle_type'] or '—'}</td></tr>
                 <tr><td style='padding:6px;'><b>Тип учета</b></td><td style='padding:6px;'>{meter_type_label(r['meter_type'])}</td></tr>
@@ -824,6 +874,12 @@ def request_detail(request_id):
 
             <form method='post' action='/requests/{r["id"]}/fuel'>
                 <div style='margin-bottom:10px;'>
+                    <label><b>Заправка:</b></label><br>
+                    <input type='text' value='{r["fuel_station_name"] or ""}' disabled
+                           style='width:100%; padding:8px; background:#f5f5f5;'>
+                </div>
+
+                <div style='margin-bottom:10px;'>
                     <label><b>Согласовано литров:</b></label><br>
                     <input type='text' value='{r["approved_liters"] or r["requested_liters"] or ""}' disabled
                            style='width:100%; padding:8px; background:#f5f5f5;'>
@@ -858,6 +914,12 @@ def request_detail(request_id):
             <h3 style='margin-top:0;'>Контроль</h3>
 
             <form method='post' action='/requests/{r["id"]}/check'>
+                <div style='margin-bottom:10px;'>
+                    <label><b>Заправка:</b></label><br>
+                    <input type='text' value='{r["fuel_station_name"] or ""}' disabled
+                           style='width:100%; padding:8px; background:#f5f5f5;'>
+                </div>
+
                 <div style='margin-bottom:10px;'>
                     <label><b>Фактически отпущено:</b></label><br>
                     <input type='text' value='{r["actual_liters"] or ""} л' disabled
@@ -966,14 +1028,17 @@ def request_fuel(request_id):
             r.status,
             r.requested_liters,
             r.approved_liters,
+            r.fuel_station_id,
             COALESCE(r.approval_type, 'internal') AS approval_type,
             o.company_id AS object_company_id,
             v.company_id AS vehicle_company_id,
-            fc.id AS fuel_supplier_company_id
+            fc.id AS fuel_supplier_company_id,
+            fs.responsible_user_id AS station_responsible_user_id
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
         LEFT JOIN companies fc ON fc.name = r.fuel_supplier
+        LEFT JOIN fuel_stations fs ON fs.id = r.fuel_station_id
         WHERE r.id = %s
     """, (request_id,))
 
@@ -1011,16 +1076,19 @@ def request_check(request_id):
             r.id,
             r.status,
             r.actual_liters,
+            r.fuel_station_id,
             o.name AS object_name,
             o.company_id AS object_company_id,
             v.plate_number,
             v.vehicle_name,
             v.company_id AS vehicle_company_id,
-            fc.id AS fuel_supplier_company_id
+            fc.id AS fuel_supplier_company_id,
+            fs.responsible_user_id AS station_responsible_user_id
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
         LEFT JOIN companies fc ON fc.name = r.fuel_supplier
+        LEFT JOIN fuel_stations fs ON fs.id = r.fuel_station_id
         WHERE r.id = %s
     """, (request_id,))
 
@@ -1066,9 +1134,10 @@ def request_check(request_id):
             dispatcher_status,
             comment,
             created_at,
-            entry_type
+            entry_type,
+            fuel_station_id
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s)
     """, (
         vehicle_text,
         object_name,
@@ -1077,7 +1146,8 @@ def request_check(request_id):
         controller_name,
         "approved",
         check_comment,
-        "chiqim"
+        "chiqim",
+        req["fuel_station_id"]
     ))
 
     return redirect("/requests")
