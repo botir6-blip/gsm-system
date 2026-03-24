@@ -23,6 +23,52 @@ BASE_HTML = """
             border-radius: 18px;
             box-shadow: 0 10px 30px rgba(31,41,55,0.08);
         }
+        .site-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            padding: 14px 18px;
+            margin-bottom: 18px;
+            border-radius: 16px;
+            background: linear-gradient(90deg, #0f172a 0%, #1d4ed8 100%);
+            color: #ffffff;
+            box-shadow: 0 10px 25px rgba(29,78,216,0.18);
+            flex-wrap: wrap;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 0;
+        }
+        .brand-logo-wrap {
+            background: #ffffff;
+            padding: 6px 10px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .brand-logo {
+            height: 46px;
+            width: auto;
+            display: block;
+        }
+        .brand-text {
+            min-width: 0;
+        }
+        .brand-title {
+            font-size: 22px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin: 0;
+        }
+        .brand-subtitle {
+            font-size: 13px;
+            opacity: 0.9;
+            margin-top: 4px;
+        }
         .topbar {
             display: flex;
             justify-content: space-between;
@@ -30,6 +76,10 @@ BASE_HTML = """
             align-items: center;
             margin-bottom: 18px;
             flex-wrap: wrap;
+        }
+        .page-title {
+            margin: 0;
+            font-size: 28px;
         }
         .userbox {
             background: #f3f6fb;
@@ -193,17 +243,34 @@ BASE_HTML = """
             .grid-2 { grid-template-columns: 1fr; }
         }
         @media (max-width: 700px) {
+            body { padding: 12px; }
             .dashboard { grid-template-columns: 1fr; }
             .container { padding: 14px; }
             table { font-size: 13px; }
+            .brand-logo { height: 38px; }
+            .brand-title { font-size: 18px; }
+            .page-title { font-size: 22px; }
         }
     </style>
 </head>
 <body>
 <div class="container">
-    <div class="topbar">
-        <h1>{{ title }}</h1>
+
+    <div class="site-header">
+        <div class="brand">
+            <div class="brand-logo-wrap">
+                <img src="/static/logo.png" alt="ERIELL" class="brand-logo">
+            </div>
+            <div class="brand-text">
+                <div class="brand-title">ERIELL</div>
+                <div class="brand-subtitle">GSM Control System</div>
+            </div>
+        </div>
         {{ user_box|safe }}
+    </div>
+
+    <div class="topbar">
+        <h1 class="page-title">{{ title }}</h1>
     </div>
 
     {{ menu|safe }}
