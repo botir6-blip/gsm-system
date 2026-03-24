@@ -37,7 +37,12 @@ def is_admin():
 
 def is_request_initiator():
     role = current_role()
-    return role in ["Инициатор заявки", "initiator", "dispatcher"]
+    return role in [
+        "Инициатор заявки",
+        "initiator",
+        "request_initiator",
+        "dispatcher"
+    ]
 
 
 def is_internal_approver():
@@ -502,7 +507,6 @@ def new_request():
     """
 
     return render_page("Новая заявка", content)
-
 
 @requests_bp.route("/requests/<int:request_id>")
 @login_required
