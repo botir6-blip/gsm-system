@@ -36,13 +36,12 @@ def is_admin():
 
 
 def is_request_initiator():
-    role = str(current_role() or "").strip().lower()
+    role = current_role()
     return role in [
-        "инициатор заявки",
+        "Инициатор заявки",
         "initiator",
         "request_initiator",
         "dispatcher",
-        "requester"
     ]
 
 
@@ -50,7 +49,7 @@ def is_internal_approver():
     role = current_role()
     return role in [
         "Согласующий по внутреннему транспорту",
-        "internal_approver"
+        "internal_approver",
     ]
 
 
@@ -58,7 +57,24 @@ def is_external_approver():
     role = current_role()
     return role in [
         "Согласующий по стороннему транспорту",
-        "external_approver"
+        "external_approver",
+    ]
+
+
+def is_fuel_operator():
+    role = current_role()
+    return role in [
+        "Оператор заправки",
+        "fuel_operator",
+        "operator",
+    ]
+
+
+def is_controller():
+    role = current_role()
+    return role in [
+        "Контролёр",
+        "controller",
     ]
 
 
@@ -75,28 +91,30 @@ def normalize_approval_type(value):
 
 def can_see_request_row(row):
     status = (row.get("status") or "").strip()
+    approval_type = normalize_approval_type(row.get("approval_type"))
 
-    # Ёпилганлар "Заявки" да кўринмайди
     if status == "checked":
         return False
 
-    approval_type = normalize_approval_type(row.get("approval_type"))
+    if is_internal_approver():
+        return status == "new" and approval_type == "internal"
 
     if is_external_approver():
-        return approval_type == "external"
+        return status == "new" and approval_type == "external"
 
-    if is_internal_approver():
-        return approval_type == "internal"
-
-    # Инициатор заявкаларни кўриши мумкин
     if is_request_initiator():
-        return True
+        return status == "new"
 
-    # Админга ҳам "Заявки" бўлимида фақат кўриш мумкин, лекин рухсат бериш йўқ
+    if is_fuel_operator():
+        return status == "approved"
+
+    if is_controller():
+        return status in ["fueled", "driver_confirmed"]
+
     if is_admin():
-        return True
+        return status in ["new", "approved", "fueled", "driver_confirmed", "rejected"]
 
-    return True
+    return False
 
 
 def can_approve_request(row):
@@ -105,13 +123,19 @@ def can_approve_request(row):
 
     approval_type = normalize_approval_type(row.get("approval_type"))
 
-    if is_external_approver():
-        return approval_type == "external"
-
     if is_internal_approver():
         return approval_type == "internal"
 
+    if is_external_approver():
+        return approval_type == "external"
+
     return False
+
+
+def can_fuel_request(row):
+    if not is_fuel_operator():
+        return False
+    return (row.get("status") or "") == "approved"
 
 
 def status_label(status):
@@ -176,6 +200,7 @@ def requests_page():
             v.load_coeff_loaded,
             v.load_coeff_heavy,
             r.requested_liters,
+            r.approved_liters,
             r.actual_liters,
             r.requested_by,
             r.approved_by,
@@ -192,7 +217,7 @@ def requests_page():
         WHERE COALESCE(r.status, 'new') <> 'checked'
         ORDER BY r.id DESC
     """)
-    
+
     visible_rows = [r for r in rows if can_see_request_row(r)]
 
     content = """
@@ -241,11 +266,11 @@ def requests_page():
                 else "Внутренний транспорт"
             )
 
-            approve_btn = ""
+            action_btn = ""
             if can_approve_request(r):
-                approve_btn = f"""
-                    <a href='/requests/{r["id"]}' style='margin-left:8px;'>Согласовать</a>
-                """
+                action_btn = f"<a href='/requests/{r['id']}' style='margin-left:8px;'>Согласовать</a>"
+            elif can_fuel_request(r):
+                action_btn = f"<a href='/requests/{r['id']}' style='margin-left:8px;'>Заправить</a>"
 
             row_bg = "background:#e8f5e9;" if r["status"] == "checked" else ""
 
@@ -266,14 +291,14 @@ def requests_page():
                 <td>{r['requested_by'] or '—'}</td>
                 <td style='white-space:nowrap;'>
                     <a href='/requests/{r["id"]}'>Подробнее</a>
-                    {approve_btn}
+                    {action_btn}
                 </td>
             </tr>
             """
 
         content += "</table></div>"
     else:
-        content += "<p>Заявок пока нет.</p>"
+        content += "<p>Активных заявок нет.</p>"
 
     return render_page("Заявки", content)
 
@@ -516,6 +541,7 @@ def new_request():
 
     return render_page("Новая заявка", content)
 
+
 @requests_bp.route("/requests/<int:request_id>")
 @login_required
 def request_detail(request_id):
@@ -683,9 +709,45 @@ def request_detail(request_id):
         </div>
         """
 
+    if can_fuel_request(r):
+        content += f"""
+        <div style='border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; margin-top:14px;'>
+            <h3 style='margin-top:0;'>Заправка</h3>
+
+            <form method='post' action='/requests/{r["id"]}/fuel'>
+                <div style='margin-bottom:10px;'>
+                    <label><b>Согласовано литров:</b></label><br>
+                    <input type='text' value='{r["approved_liters"] or r["requested_liters"] or ""}' disabled
+                           style='width:100%; padding:8px; background:#f5f5f5;'>
+                </div>
+
+                <div style='margin-bottom:10px;'>
+                    <label><b>Фактически отпущено литров:</b></label><br>
+                    <input type='number' step='0.01' name='actual_liters'
+                           value='{r["approved_liters"] or r["requested_liters"] or ""}'
+                           style='width:100%; padding:8px;' required>
+                </div>
+
+                <div style='margin-bottom:10px;'>
+                    <label><b>Комментарий оператора:</b></label><br>
+                    <textarea name='fuel_comment' rows='4'
+                              style='width:100%; padding:8px;'></textarea>
+                </div>
+
+                <div>
+                    <button type='submit'
+                            style='padding:10px 14px; border:none; border-radius:8px; background:#ef6c00; color:white;'>
+                        Заправлено
+                    </button>
+                </div>
+            </form>
+        </div>
+        """
+
     content += "</div>"
 
     return render_page(f"Заявка №{request_id}", content)
+
 
 @requests_bp.route("/requests/<int:request_id>/decision", methods=["POST"])
 @login_required
@@ -705,9 +767,6 @@ def request_decision(request_id):
 
     if not can_approve_request(req):
         return render_page("Доступ запрещен", "<p>У вас нет прав на согласование этой заявки.</p>")
-
-    if req["status"] != "new":
-        return redirect(f"/requests/{request_id}")
 
     decision = request.form.get("decision")
     approved_liters = request.form.get("approved_liters") or req["requested_liters"]
@@ -759,76 +818,42 @@ def request_decision(request_id):
 
     return redirect(f"/requests/{request_id}")
 
-@requests_bp.route("/journal")
+
+@requests_bp.route("/requests/<int:request_id>/fuel", methods=["POST"])
 @login_required
-def journal_page():
-    rows = fetch_all("""
+def request_fuel(request_id):
+    req = fetch_one("""
         SELECT
-            r.id,
-            o.name AS object_name,
-            v.plate_number,
-            v.vehicle_name,
-            v.vehicle_type,
-            r.requested_liters,
-            r.actual_liters,
-            r.requested_by,
-            r.approved_by,
-            r.fueler_name,
-            r.controller_name,
-            r.status,
-            r.created_at,
-            r.project_name,
-            r.fuel_supplier
-        FROM fuel_requests r
-        LEFT JOIN objects o ON o.id = r.object_id
-        LEFT JOIN vehicles v ON v.id = r.vehicle_id
-        WHERE COALESCE(r.status, 'new') <> 'new'
-        ORDER BY r.id DESC
-    """)
+            id,
+            status,
+            requested_liters,
+            approved_liters,
+            COALESCE(approval_type, 'internal') AS approval_type
+        FROM fuel_requests
+        WHERE id = %s
+    """, (request_id,))
 
-    content = """
-    <div>
-        <h2>Журнал операций</h2>
-    """
+    if not req:
+        return render_page("Ошибка", "<p>Заявка не найдена.</p>")
 
-    if rows:
-        content += """
-        <table border='1' cellpadding='8' cellspacing='0'
-               style='border-collapse:collapse; width:100%; background:#fff;'>
-            <tr style='background:#f5f5f5;'>
-                <th>ID</th>
-                <th>Статус</th>
-                <th>Объект</th>
-                <th>Транспорт</th>
-                <th>Запрос</th>
-                <th>Факт</th>
-                <th>За чей счет</th>
-                <th>Подал</th>
-                <th>Дата</th>
-            </tr>
-        """
+    if not can_fuel_request(req):
+        return render_page("Доступ запрещен", "<p>У вас нет прав на выполнение заправки по этой заявке.</p>")
 
-        for r in rows:
-            transport = f"{r['plate_number'] or ''} {r['vehicle_name'] or ''}".strip()
+    actual_liters = request.form.get("actual_liters") or 0
+    operator_name = current_user_name()
 
-            content += f"""
-            <tr>
-                <td>{r['id']}</td>
-                <td>{status_label(r['status'])}</td>
-                <td>{r['object_name'] or '—'}</td>
-                <td>{transport or '—'}</td>
-                <td>{r['requested_liters'] or '—'} л</td>
-                <td>{r['actual_liters'] or '—'} л</td>
-                <td>{r['fuel_supplier'] or '—'}</td>
-                <td>{r['requested_by'] or '—'}</td>
-                <td>{r['created_at'] or '—'}</td>
-            </tr>
-            """
+    execute_query("""
+        UPDATE fuel_requests
+        SET
+            status = 'fueled',
+            actual_liters = %s,
+            fueler_name = %s,
+            fueled_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """, (
+        actual_liters,
+        operator_name,
+        request_id
+    ))
 
-        content += "</table>"
-    else:
-        content += "<p>Журнал пуст.</p>"
-
-    content += "</div>"
-
-    return render_page("Журнал", content)
+    return redirect(f"/requests/{request_id}")
