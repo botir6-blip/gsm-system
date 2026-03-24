@@ -17,6 +17,7 @@ def transactions_page():
     user = current_user()
     is_admin = is_admin_user(user)
     company_id = user.get("company_id") if user else None
+    user_id = user.get("id") if user else None
 
     query = """
         SELECT
@@ -29,9 +30,14 @@ def transactions_page():
             ft.created_at,
             ft.vehicle,
             ft.object_name,
+            ft.fuel_station_id,
+            fs.name AS fuel_station_name,
+            fs.responsible_user_id AS station_responsible_user_id,
             o.company_id AS object_company_id,
             v.company_id AS vehicle_company_id
         FROM fuel_transactions ft
+        LEFT JOIN fuel_stations fs
+            ON fs.id = ft.fuel_station_id
         LEFT JOIN objects o
             ON o.name = ft.object_name
         LEFT JOIN vehicles v
@@ -39,13 +45,24 @@ def transactions_page():
     """
     params = ()
 
-    if not is_admin and company_id:
-        query += """
-        WHERE
-            o.company_id = %s
-            OR v.company_id = %s
-        """
-        params = (company_id, company_id)
+    if not is_admin:
+        filters = []
+        values = []
+
+        if company_id:
+            filters.append("o.company_id = %s")
+            values.append(company_id)
+
+            filters.append("v.company_id = %s")
+            values.append(company_id)
+
+        if user_id:
+            filters.append("fs.responsible_user_id = %s")
+            values.append(user_id)
+
+        if filters:
+            query += " WHERE " + " OR ".join(filters)
+            params = tuple(values)
 
     query += " ORDER BY ft.id DESC"
 
@@ -59,6 +76,7 @@ def transactions_page():
         <tr>
             <td>{t['id']}</td>
             <td>{t['object_name'] or ''}</td>
+            <td>{t['fuel_station_name'] or ''}</td>
             <td>{t['vehicle'] or ''}</td>
             <td>{entry_type_ru}</td>
             <td>{t['liters']}</td>
@@ -75,7 +93,7 @@ def transactions_page():
     if not rows:
         rows = """
         <tr>
-            <td colspan="10" style="text-align:center; padding:20px;">
+            <td colspan="11" style="text-align:center; padding:20px;">
                 Записи не найдены
             </td>
         </tr>
@@ -88,6 +106,7 @@ def transactions_page():
             <tr>
                 <th>ID</th>
                 <th>Объект</th>
+                <th>Заправка</th>
                 <th>Транспорт</th>
                 <th>Тип</th>
                 <th>Литры</th>
