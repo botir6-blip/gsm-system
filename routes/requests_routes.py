@@ -758,3 +758,77 @@ def request_decision(request_id):
         ))
 
     return redirect(f"/requests/{request_id}")
+
+@requests_bp.route("/journal")
+@login_required
+def journal_page():
+    rows = fetch_all("""
+        SELECT
+            r.id,
+            o.name AS object_name,
+            v.plate_number,
+            v.vehicle_name,
+            v.vehicle_type,
+            r.requested_liters,
+            r.actual_liters,
+            r.requested_by,
+            r.approved_by,
+            r.fueler_name,
+            r.controller_name,
+            r.status,
+            r.created_at,
+            r.project_name,
+            r.fuel_supplier
+        FROM fuel_requests r
+        LEFT JOIN objects o ON o.id = r.object_id
+        LEFT JOIN vehicles v ON v.id = r.vehicle_id
+        WHERE COALESCE(r.status, 'new') <> 'new'
+        ORDER BY r.id DESC
+    """)
+
+    content = """
+    <div>
+        <h2>Журнал операций</h2>
+    """
+
+    if rows:
+        content += """
+        <table border='1' cellpadding='8' cellspacing='0'
+               style='border-collapse:collapse; width:100%; background:#fff;'>
+            <tr style='background:#f5f5f5;'>
+                <th>ID</th>
+                <th>Статус</th>
+                <th>Объект</th>
+                <th>Транспорт</th>
+                <th>Запрос</th>
+                <th>Факт</th>
+                <th>За чей счет</th>
+                <th>Подал</th>
+                <th>Дата</th>
+            </tr>
+        """
+
+        for r in rows:
+            transport = f"{r['plate_number'] or ''} {r['vehicle_name'] or ''}".strip()
+
+            content += f"""
+            <tr>
+                <td>{r['id']}</td>
+                <td>{status_label(r['status'])}</td>
+                <td>{r['object_name'] or '—'}</td>
+                <td>{transport or '—'}</td>
+                <td>{r['requested_liters'] or '—'} л</td>
+                <td>{r['actual_liters'] or '—'} л</td>
+                <td>{r['fuel_supplier'] or '—'}</td>
+                <td>{r['requested_by'] or '—'}</td>
+                <td>{r['created_at'] or '—'}</td>
+            </tr>
+            """
+
+        content += "</table>"
+    else:
+        content += "<p>Журнал пуст.</p>"
+
+    content += "</div>"
+
+    return render_page("Журнал", content)
