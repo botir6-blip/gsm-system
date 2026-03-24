@@ -903,8 +903,13 @@ def request_check(request_id):
             r.status,
             r.actual_liters,
             r.vehicle_id,
-            r.object_id
+            r.object_id,
+            o.name AS object_name,
+            v.plate_number,
+            v.vehicle_name
         FROM fuel_requests r
+        LEFT JOIN objects o ON o.id = r.object_id
+        LEFT JOIN vehicles v ON v.id = r.vehicle_id
         WHERE r.id = %s
     """, (request_id,))
 
@@ -916,6 +921,29 @@ def request_check(request_id):
 
     controller_name = current_user_name()
     check_comment = request.form.get("check_comment") or ""
+
+    vehicle_text = " ".join(
+        part.strip()
+        for part in [
+            str(req.get("plate_number") or ""),
+            str(req.get("vehicle_name") or "")
+        ]
+        if part and str(part).strip()
+    ).strip()
+
+    object_name = (req.get("object_name") or "").strip()
+
+    if not vehicle_text:
+        return render_page(
+            "Ошибка",
+            "<p>Не удалось определить транспорт для записи в журнал fuel_transactions.</p>"
+        )
+
+    if not object_name:
+        return render_page(
+            "Ошибка",
+            "<p>Не удалось определить объект для записи в журнал fuel_transactions.</p>"
+        )
 
     execute_query("""
         UPDATE fuel_requests
@@ -933,8 +961,8 @@ def request_check(request_id):
 
     execute_query("""
         INSERT INTO fuel_transactions (
-            vehicle_id,
-            object_id,
+            vehicle,
+            object_name,
             entry_type,
             liters,
             speedometer,
@@ -944,8 +972,8 @@ def request_check(request_id):
         )
         VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
     """, (
-        req["vehicle_id"],
-        req["object_id"],
+        vehicle_text,
+        object_name,
         "chiqim",
         req["actual_liters"] or 0,
         None,
