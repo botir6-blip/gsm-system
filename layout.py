@@ -82,11 +82,13 @@ BASE_HTML = """
             font-size: 28px;
         }
         .userbox {
-            background: #f3f6fb;
+            background: #ffffff;
             border: 1px solid #dbe4f0;
             padding: 10px 14px;
             border-radius: 12px;
             font-size: 14px;
+            color: #111827;   /* 🔥 ЭНГ МУҲИМ */
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
         }
         h1, h2, h3 { margin-top: 0; }
         .menu {
@@ -263,7 +265,7 @@ BASE_HTML = """
             </div>
             <div class="brand-text">
                 <div class="brand-title">ERIELL</div>
-                <div class="brand-subtitle">GSM Control System</div>
+                <div class="brand-subtitle">Система контроля ГСМ</div>
             </div>
         </div>
         {{ user_box|safe }}
