@@ -60,4 +60,4 @@ def index():
         </div>
     </div>
     """
-    return render_page("Dashboard системы ГСМ", content)
+    return render_page("Панель управления ГСМ", content)
