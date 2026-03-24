@@ -74,8 +74,11 @@ def normalize_approval_type(value):
 
 
 def can_see_request_row(row):
-    if is_admin():
-        return True
+    status = (row.get("status") or "").strip()
+
+    # Ёпилганлар "Заявки" да кўринмайди
+    if status == "checked":
+        return False
 
     approval_type = normalize_approval_type(row.get("approval_type"))
 
@@ -85,15 +88,20 @@ def can_see_request_row(row):
     if is_internal_approver():
         return approval_type == "internal"
 
+    # Инициатор заявкаларни кўриши мумкин
+    if is_request_initiator():
+        return True
+
+    # Админга ҳам "Заявки" бўлимида фақат кўриш мумкин, лекин рухсат бериш йўқ
+    if is_admin():
+        return True
+
     return True
 
 
 def can_approve_request(row):
     if (row.get("status") or "") != "new":
         return False
-
-    if is_admin():
-        return True
 
     approval_type = normalize_approval_type(row.get("approval_type"))
 
@@ -181,11 +189,10 @@ def requests_page():
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
         LEFT JOIN vehicles v ON v.id = r.vehicle_id
-        ORDER BY
-            CASE WHEN r.status = 'checked' THEN 1 ELSE 0 END,
-            r.id DESC
+        WHERE COALESCE(r.status, 'new') <> 'checked'
+        ORDER BY r.id DESC
     """)
-
+    
     visible_rows = [r for r in rows if can_see_request_row(r)]
 
     content = """
