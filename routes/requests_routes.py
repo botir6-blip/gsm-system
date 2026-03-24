@@ -537,6 +537,12 @@ def request_detail(request_id):
     if not can_see_request_row(r):
         return render_page("Доступ запрещен", "<p>У вас нет прав на просмотр этой заявки.</p>")
 
+    companies = fetch_all("""
+        SELECT id, name
+        FROM companies
+        ORDER BY name
+    """)
+
     transport = f"{r['plate_number'] or ''} {r['vehicle_name'] or ''}".strip()
     base_norm = "—"
     if r["base_consumption"]:
@@ -624,10 +630,16 @@ def request_detail(request_id):
 
                 <div style='margin-bottom:10px;'>
                     <label><b>За чей счет выдается топливо:</b></label><br>
-                    <input type='text' name='fuel_supplier'
-                           value='{r["fuel_supplier"] or ""}'
-                           style='width:100%; padding:8px;'
-                           required>
+                    <select name='fuel_supplier' style='width:100%; padding:8px;' required>
+                        <option value=''>-- Выберите компанию --</option>
+        """
+
+        for c in companies:
+            selected = "selected" if (r["fuel_supplier"] or "") == c["name"] else ""
+            content += f"<option value='{c['name']}' {selected}>{c['name']}</option>"
+
+        content += f"""
+                    </select>
                 </div>
 
                 <div style='margin-bottom:10px;'>
@@ -667,7 +679,6 @@ def request_detail(request_id):
     content += "</div>"
 
     return render_page(f"Заявка №{request_id}", content)
-
 
 @requests_bp.route("/requests/<int:request_id>/decision", methods=["POST"])
 @login_required
