@@ -896,9 +896,14 @@ def request_fuel(request_id):
 @login_required
 def request_check(request_id):
     req = fetch_one("""
-        SELECT id, status
-        FROM fuel_requests
-        WHERE id = %s
+        SELECT
+            r.id,
+            r.status,
+            r.actual_liters,
+            r.vehicle_id,
+            r.object_id
+        FROM fuel_requests r
+        WHERE r.id = %s
     """, (request_id,))
 
     if not req:
@@ -910,6 +915,7 @@ def request_check(request_id):
     controller_name = current_user_name()
     check_comment = request.form.get("check_comment") or ""
 
+    # ✅ 1. Заявкани закрываем
     execute_query("""
         UPDATE fuel_requests
         SET
@@ -922,6 +928,29 @@ def request_check(request_id):
         controller_name,
         check_comment,
         request_id
+    ))
+
+    # ✅ 2. ЖУРНАЛГА ҚЎШАМИЗ (ЭНГ МУҲИМ)
+    execute_query("""
+        INSERT INTO fuel_transactions (
+            vehicle_id,
+            object_id,
+            entry_type,
+            liters,
+            speedometer,
+            entered_by,
+            comment,
+            created_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+    """, (
+        req["vehicle_id"],
+        req["object_id"],
+        "chiqim",  # расход
+        req["actual_liters"] or 0,
+        None,  # кейин қўшамиз (спидометр)
+        controller_name,
+        check_comment
     ))
 
     return redirect("/requests")
