@@ -40,12 +40,18 @@ def is_request_initiator():
 
 
 def is_internal_approver():
-    return current_role() == "Согласующий по внутреннему транспорту"
-
+    role = current_role()
+    return (
+        role == "Согласующий по внутреннему транспорту"
+        or role == "internal_approver"
+    )
 
 def is_external_approver():
-    return current_role() == "Согласующий по стороннему транспорту"
-
+    role = current_role()
+    return (
+        role == "Согласующий по стороннему транспорту"
+        or role == "external_approver"
+    )
 
 def can_create_request():
     return is_admin() or is_request_initiator()
