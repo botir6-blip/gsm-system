@@ -36,13 +36,14 @@ def is_admin():
 
 
 def is_request_initiator():
-    role = current_role().lower()
-    return (
-        role == "инициатор заявки"
-        or role == "initiator"
-        or role == "request_initiator"
-        or role == "dispatcher"
-    )
+    role = str(current_role() or "").strip().lower()
+    return role in [
+        "инициатор заявки",
+        "initiator",
+        "request_initiator",
+        "dispatcher",
+        "requester"
+    ]
 
 
 def is_internal_approver():
