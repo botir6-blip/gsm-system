@@ -97,7 +97,6 @@ def can_check_request(row):
         return False
     return (row.get("status") or "") in ["fueled", "driver_confirmed"]
 
-
 def can_see_request_row(row):
     status = (row.get("status") or "").strip()
     approval_type = normalize_approval_type(row.get("approval_type"))
@@ -105,23 +104,23 @@ def can_see_request_row(row):
     if status == "checked":
         return False
 
-    if is_internal_approver():
-        return status == "new" and approval_type == "internal"
-
-    if is_external_approver():
-        return status == "new" and approval_type == "external"
+    if is_admin():
+        return True
 
     if is_request_initiator():
         return status in ["new", "approved", "fueled", "driver_confirmed", "rejected"]
+
+    if is_internal_approver():
+        return status in ["new", "approved"] and approval_type == "internal"
+
+    if is_external_approver():
+        return status in ["new", "approved"] and approval_type == "external"
 
     if is_fuel_operator():
         return status in ["approved", "fueled"]
 
     if is_controller():
         return status in ["fueled", "driver_confirmed"]
-
-    if is_admin():
-        return status in ["new", "approved", "fueled", "driver_confirmed", "rejected"]
 
     return False
 
