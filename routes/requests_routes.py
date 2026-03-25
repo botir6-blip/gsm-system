@@ -192,7 +192,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
             </div>
 
             <div>
-                <label><b>7. За чей счет выдается топливо:</b></label><br>
+                <label><b>7. Кто отвечает за топливо:</b></label><br>
                 <select name='fuel_provider_company_id' style='width:100%; padding:8px;' required>
                     <option value=''>Выберите компанию</option>
     """
