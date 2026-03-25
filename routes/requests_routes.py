@@ -25,6 +25,17 @@ def get_company_stations(company_id):
         ORDER BY fs.name
     """, (company_id,))
 
+def get_status_label(status):
+    statuses = {
+        "new": "Новая",
+        "approved": "Одобрена",
+        "fueling": "В процессе",
+        "fueled": "Заправлено",
+        "driver_confirmed": "Подтверждено",
+        "closed": "Завершена",
+    }
+    return statuses.get(status, status or "")
+
 
 def parse_request_comment(comment_text):
     data = {
@@ -283,6 +294,7 @@ def requests_list():
             cu.name AS requester_company_name,
             fp.name AS fuel_provider_company_name,
             o.name AS object_name,
+            v.fuel_norm AS fuel_norm,
             fs.name AS fuel_station_name,
             fs.company_id AS station_company_id
         FROM fuel_requests fr
@@ -293,6 +305,7 @@ def requests_list():
         LEFT JOIN companies cu ON cu.id = fr.requester_company_id
         LEFT JOIN companies fp ON fp.id = fr.fuel_provider_company_id
         LEFT JOIN objects o ON o.id = fr.object_id
+        LEFT JOIN vehicles v ON v.id = fr.vehicle_id
         LEFT JOIN fuel_stations fs ON fs.id = fr.fuel_station_id
     """
 
@@ -341,6 +354,7 @@ def requests_list():
                 <th>Заправлено</th>
                 <th>Поставщик топлива</th>
                 <th>Объект заправки</th>
+                <th>Норма расхода</th>
                 <th>Статус</th>
                 <th>Действие</th>
             </tr>
@@ -414,7 +428,8 @@ def requests_list():
                 <td>{r.get('fueled_liters') or ''}</td>
                 <td>{r.get('fuel_provider_company_name') or ''}</td>
                 <td>{r.get('object_name') or ''}</td>
-                <td>{r.get('status') or ''}</td>
+                <td>{r.get('fuel_norm') or ''}</td>
+                <td>{get_status_label(r.get('status'))}</td>
                 <td>{actions}</td>
             </tr>
         """
