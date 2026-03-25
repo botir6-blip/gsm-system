@@ -38,7 +38,6 @@ def login():
             <input type="password" name="password" placeholder="Пароль" required>
             <button type="submit">Войти</button>
         </form>
-        <p><b>Стартовый админ:</b> admin / admin123</p>
     </div>
     """
     return render_page("Вход", content)
