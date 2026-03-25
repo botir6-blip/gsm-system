@@ -64,11 +64,11 @@ def build_meter_display(row, dual_mode):
             else:
                 parts.append("Моточасы")
 
-        return "<br>".join(parts)
+        return "<div style='line-height:1.4;'>" + "<br>".join(parts) + "</div>" if parts else ""
 
     unit = meter_unit(row.get("meter_type"))
     if row.get("base_consumption"):
-        return f"{meter_type_label(row.get('meter_type'))}<br>{row['base_consumption']} {unit}"
+        return f"<div style='line-height:1.4;'>{meter_type_label(row.get('meter_type'))}<br>{row['base_consumption']} {unit}</div>"
     return meter_type_label(row.get("meter_type"))
 
 
@@ -110,14 +110,22 @@ def vehicles_page():
             ORDER BY id DESC
         """)
 
-    content = "<h2>Транспорт</h2>"
-    content += "<p><a href='/vehicles/new'>➕ Добавить транспорт</a></p>"
+    content = """
+    <div style="margin-bottom:16px;">
+        <a href="/vehicles/new"
+           style="display:inline-block; background:#3367d6; color:white; text-decoration:none;
+                  padding:10px 16px; border-radius:10px; font-weight:600;">
+            ➕ Добавить транспорт
+        </a>
+    </div>
+    """
 
     if rows:
         content += """
-        <table border='1' cellpadding='8' cellspacing='0'
-               style='border-collapse: collapse; width:100%; font-size:14px;'>
-            <tr>
+        <div style="overflow-x:auto;">
+        <table border="1" cellpadding="8" cellspacing="0"
+               style="border-collapse:collapse; width:100%; font-size:14px; background:white;">
+            <tr style="background:#f3f6fb;">
                 <th>ID</th>
                 <th>Наименование транспорта</th>
                 <th>Тип транспорта</th>
@@ -126,7 +134,7 @@ def vehicles_page():
                 <th>Без груза</th>
                 <th>С грузом</th>
                 <th>Тяжелые условия</th>
-                <th>Действия</th>
+                <th style="min-width:150px;">Действия</th>
             </tr>
         """
 
@@ -144,14 +152,21 @@ def vehicles_page():
                 <td>{row['load_coeff_loaded'] or ''}</td>
                 <td>{row['load_coeff_heavy'] or ''}</td>
                 <td style="white-space:nowrap;">
-                    <a href='/vehicles/edit/{row["id"]}'>✏️ Редактировать</a>
-                    &nbsp;|&nbsp;
+                    <a href="/vehicles/edit/{row['id']}"
+                       style="display:inline-block; padding:6px 10px; margin-right:6px;
+                              background:#f4f4f4; border:1px solid #d0d0d0; border-radius:8px;
+                              text-decoration:none; color:#333;">
+                        ✏️ Изм.
+                    </a>
+
                     <form method="POST"
                           action="/vehicles/delete/{row['id']}"
                           style="display:inline;"
                           onsubmit="return confirm('Удалить транспорт?')">
                         <button type="submit"
-                                style="background:none;border:none;color:#c62828;cursor:pointer;padding:0;">
+                                style="display:inline-block; padding:6px 10px;
+                                       background:#fff0f0; color:#c62828; border:1px solid #e0b4b4;
+                                       border-radius:8px; cursor:pointer;">
                             🗑 Удалить
                         </button>
                     </form>
@@ -159,7 +174,7 @@ def vehicles_page():
             </tr>
             """
 
-        content += "</table>"
+        content += "</table></div>"
     else:
         content += "<p>Транспорт пока не добавлен.</p>"
 
