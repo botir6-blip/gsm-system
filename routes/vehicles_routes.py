@@ -134,7 +134,7 @@ def vehicles_page():
                 <th>Без груза</th>
                 <th>С грузом</th>
                 <th>Тяжелые условия</th>
-                <th style="min-width:150px;">Действия</th>
+                <th style="min-width:220px; width:220px;">Действия</th>
             </tr>
         """
 
@@ -151,25 +151,27 @@ def vehicles_page():
                 <td>{row['load_coeff_empty'] or ''}</td>
                 <td>{row['load_coeff_loaded'] or ''}</td>
                 <td>{row['load_coeff_heavy'] or ''}</td>
-                <td style="white-space:nowrap;">
-                    <a href="/vehicles/edit/{row['id']}"
-                       style="display:inline-block; padding:6px 10px; margin-right:6px;
-                              background:#f4f4f4; border:1px solid #d0d0d0; border-radius:8px;
-                              text-decoration:none; color:#333;">
-                        ✏️ Изм.
-                    </a>
+                <td style="min-width:220px; width:220px;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap;">
+                        <a href="/vehicles/edit/{row['id']}"
+                           style="display:inline-block; padding:6px 10px;
+                                  background:#f4f4f4; border:1px solid #d0d0d0; border-radius:8px;
+                                  text-decoration:none; color:#333; white-space:nowrap;">
+                            ✏️ Изм.
+                        </a>
 
-                    <form method="POST"
-                          action="/vehicles/delete/{row['id']}"
-                          style="display:inline;"
-                          onsubmit="return confirm('Удалить транспорт?')">
-                        <button type="submit"
-                                style="display:inline-block; padding:6px 10px;
-                                       background:#fff0f0; color:#c62828; border:1px solid #e0b4b4;
-                                       border-radius:8px; cursor:pointer;">
-                            🗑 Удалить
-                        </button>
-                    </form>
+                        <form method="POST"
+                              action="/vehicles/delete/{row['id']}"
+                              style="display:inline; margin:0;"
+                              onsubmit="return confirm('Удалить транспорт?')">
+                            <button type="submit"
+                                    style="display:inline-block; padding:6px 10px;
+                                           background:#fff0f0; color:#c62828; border:1px solid #e0b4b4;
+                                           border-radius:8px; cursor:pointer; white-space:nowrap; min-width:110px;">
+                                🗑 Удалить
+                            </button>
+                        </form>
+                    </div>
                 </td>
             </tr>
             """
