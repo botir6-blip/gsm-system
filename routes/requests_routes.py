@@ -33,6 +33,7 @@ def get_status_label(status):
         "fueled": "Заправлено",
         "driver_confirmed": "Подтверждено",
         "closed": "Завершена",
+        "checked": "Проверено",
     }
     return statuses.get(status, status or "")
 
@@ -310,11 +311,17 @@ def requests_list():
     """
 
     if role in ["admin"]:
-        rows = fetch_all(base_sql + " ORDER BY fr.created_at DESC")
+        rows = fetch_all(base_sql + """
+            WHERE fr.status NOT IN ('fueled', 'checked', 'closed')
+            ORDER BY fr.created_at DESC
+        """)
     elif role in ["manager", "director", "deputy"]:
         rows = fetch_all(base_sql + """
-            WHERE fr.requester_company_id = %s
-               OR fr.fuel_provider_company_id = %s
+            WHERE (
+                    fr.requester_company_id = %s
+                    OR fr.fuel_provider_company_id = %s
+                  )
+              AND fr.status NOT IN ('fueled', 'checked', 'closed')
             ORDER BY fr.created_at DESC
         """, (company_id, company_id))
     elif role in ["operator", "fuel_operator", "zapravka_operator"]:
@@ -336,6 +343,7 @@ def requests_list():
     else:
         rows = fetch_all(base_sql + """
             WHERE fr.requester_user_id = %s
+              AND fr.status NOT IN ('fueled', 'checked', 'closed')
             ORDER BY fr.created_at DESC
         """, (user_id,))
 
