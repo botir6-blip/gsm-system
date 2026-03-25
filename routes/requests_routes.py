@@ -320,3 +320,8 @@ def dispatcher_check_request(request_id):
 
     flash("Заявка завершена", "success")
     return redirect(url_for("requests_bp.requests_list"))
+
+@requests_bp.route("/requests/new")
+@login_required
+def new_request_redirect():
+    return redirect("/requests")
