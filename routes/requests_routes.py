@@ -26,6 +26,18 @@ def get_company_stations(company_id):
     """, (company_id,))
 
 
+def get_status_label(status):
+    labels = {
+        "new": "Новая",
+        "approved": "Одобрена",
+        "fueling": "В процессе заправки",
+        "fueled": "Заправлена",
+        "driver_confirmed": "Подтверждена водителем",
+        "closed": "Завершена",
+    }
+    return labels.get(status, status or "")
+
+
 @requests_bp.route("/requests")
 @login_required
 def requests_list():
@@ -58,17 +70,12 @@ def requests_list():
     if role in ["admin"]:
         rows = fetch_all(base_sql + " ORDER BY fr.created_at DESC")
     elif role in ["manager", "director", "deputy"]:
-        # Раҳбар фақат ўз компаниясига тегишли заявкаларни кўради
         rows = fetch_all(base_sql + """
             WHERE fr.requester_company_id = %s
                OR fr.fuel_provider_company_id = %s
             ORDER BY fr.created_at DESC
         """, (company_id, company_id))
     elif role in ["operator", "fuel_operator", "zapravka_operator"]:
-        # Оператор фақат:
-        # 1) approve қилинган
-        # 2) ўзига бириктирилган заправкага тушган
-        # 3) ўша заправка унинг компаниясига тегишли
         rows = fetch_all(base_sql + """
             WHERE fr.status IN ('approved', 'fueling')
               AND fs.operator_user_id = %s
@@ -85,88 +92,106 @@ def requests_list():
             ORDER BY fr.created_at DESC
         """, (company_id, company_id))
     else:
-        # Оддий ходим/масъул шахс — фақат ўзиники
         rows = fetch_all(base_sql + """
             WHERE fr.requester_user_id = %s
             ORDER BY fr.created_at DESC
         """, (user_id,))
 
+    stations = []
+    if role in ["manager", "director", "deputy"]:
+        stations = get_company_stations(company_id)
+
     html = """
-    <h2>Заявкалар</h2>
+    <h2>Заявки</h2>
+    """
+
+    if role not in ["operator", "fuel_operator", "zapravka_operator", "dispatcher", "ats_dispatcher"]:
+        html += """
+        <div style="margin-bottom: 15px;">
+            <a href="/requests/new" class="btn btn-success">+ Новая заявка</a>
+        </div>
+        """
+
+    html += """
     <div class="table-responsive">
     <table class="table table-bordered table-sm">
         <thead>
             <tr>
                 <th>ID</th>
-                <th>Сана</th>
-                <th>Заявка берувчи</th>
+                <th>Дата</th>
+                <th>Заявитель</th>
                 <th>Компания</th>
-                <th>Сўралган</th>
-                <th>Тасдиқланган</th>
-                <th>Қуюлган</th>
-                <th>Ёқилғи таъминловчи</th>
-                <th>Заправка</th>
+                <th>Запрошено</th>
+                <th>Одобрено</th>
+                <th>Заправлено</th>
+                <th>Поставщик топлива</th>
+                <th>АЗС</th>
                 <th>Статус</th>
-                <th>Амал</th>
+                <th>Действие</th>
             </tr>
         </thead>
         <tbody>
     """
 
-    stations = []
-    if role in ["manager", "director", "deputy"]:
-        stations = get_company_stations(company_id)
-
-    for r in rows:
-        actions = ""
-
-        if role in ["manager", "director", "deputy"] and r["status"] == "new":
-            options = '<option value="">Заправкани танланг</option>'
-            for s in stations:
-                options += f'<option value="{s["id"]}">{s["name"]}</option>'
-
-            actions += f"""
-            <form method="post" action="/requests/{r['id']}/approve" style="display:flex; gap:6px; flex-wrap:wrap;">
-                <input type="number" step="0.01" min="0" name="approved_liters"
-                       value="{r['requested_liters'] or ''}" placeholder="Литр" required>
-                <select name="fuel_station_id" required>
-                    {options}
-                </select>
-                <button type="submit" class="btn btn-success btn-sm">Рухсат бериш</button>
-            </form>
-            """
-
-        if role in ["operator", "fuel_operator", "zapravka_operator"] and r["status"] == "approved":
-            actions += f"""
-            <form method="post" action="/requests/{r['id']}/fuel" style="display:flex; gap:6px; flex-wrap:wrap;">
-                <input type="number" step="0.01" min="0" name="fueled_liters"
-                       value="{r['approved_liters'] or ''}" placeholder="Қуйилган литр" required>
-                <button type="submit" class="btn btn-primary btn-sm">Заправка қилиш</button>
-            </form>
-            """
-
-        if role in ["dispatcher", "ats_dispatcher"] and r["status"] == "driver_confirmed":
-            actions += f"""
-            <form method="post" action="/requests/{r['id']}/dispatcher-check">
-                <button type="submit" class="btn btn-dark btn-sm">Текширилди</button>
-            </form>
-            """
-
-        html += f"""
+    if not rows:
+        html += """
             <tr>
-                <td>{r['id']}</td>
-                <td>{r['created_at'].strftime('%Y-%m-%d %H:%M') if r['created_at'] else ''}</td>
-                <td>{r.get('requester_name') or ''}</td>
-                <td>{r.get('requester_company_name') or ''}</td>
-                <td>{r.get('requested_liters') or ''}</td>
-                <td>{r.get('approved_liters') or ''}</td>
-                <td>{r.get('fueled_liters') or ''}</td>
-                <td>{r.get('fuel_provider_company_name') or ''}</td>
-                <td>{r.get('fuel_station_name') or ''}</td>
-                <td>{r.get('status') or ''}</td>
-                <td>{actions}</td>
+                <td colspan="11" style="text-align:center; padding:20px;">
+                    Заявок нет
+                </td>
             </tr>
         """
+    else:
+        for r in rows:
+            actions = ""
+
+            if role in ["manager", "director", "deputy"] and r["status"] == "new":
+                options = '<option value="">Выберите АЗС</option>'
+                for s in stations:
+                    options += f'<option value="{s["id"]}">{s["name"]}</option>'
+
+                actions += f"""
+                <form method="post" action="/requests/{r['id']}/approve" style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <input type="number" step="0.01" min="0" name="approved_liters"
+                           value="{r['requested_liters'] or ''}" placeholder="Литры" required>
+                    <select name="fuel_station_id" required>
+                        {options}
+                    </select>
+                    <button type="submit" class="btn btn-success btn-sm">Одобрить</button>
+                </form>
+                """
+
+            if role in ["operator", "fuel_operator", "zapravka_operator"] and r["status"] == "approved":
+                actions += f"""
+                <form method="post" action="/requests/{r['id']}/fuel" style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <input type="number" step="0.01" min="0" name="fueled_liters"
+                           value="{r['approved_liters'] or ''}" placeholder="Заправлено (литры)" required>
+                    <button type="submit" class="btn btn-primary btn-sm">Заправить</button>
+                </form>
+                """
+
+            if role in ["dispatcher", "ats_dispatcher"] and r["status"] == "driver_confirmed":
+                actions += f"""
+                <form method="post" action="/requests/{r['id']}/dispatcher-check">
+                    <button type="submit" class="btn btn-dark btn-sm">Проверено</button>
+                </form>
+                """
+
+            html += f"""
+                <tr>
+                    <td>{r['id']}</td>
+                    <td>{r['created_at'].strftime('%Y-%m-%d %H:%M') if r['created_at'] else ''}</td>
+                    <td>{r.get('requester_name') or ''}</td>
+                    <td>{r.get('requester_company_name') or ''}</td>
+                    <td>{r.get('requested_liters') or ''}</td>
+                    <td>{r.get('approved_liters') or ''}</td>
+                    <td>{r.get('fueled_liters') or ''}</td>
+                    <td>{r.get('fuel_provider_company_name') or ''}</td>
+                    <td>{r.get('fuel_station_name') or ''}</td>
+                    <td>{get_status_label(r.get('status'))}</td>
+                    <td>{actions}</td>
+                </tr>
+            """
 
     html += """
         </tbody>
@@ -174,7 +199,138 @@ def requests_list():
     </div>
     """
 
-    return render_page("Заявкалар", html)
+    return render_page("Заявки", html)
+
+
+@requests_bp.route("/requests/new", methods=["GET", "POST"])
+@login_required
+def new_request():
+    user = get_current_user()
+
+    if request.method == "POST":
+        vehicle_id = request.form.get("vehicle_id")
+        object_id = request.form.get("object_id")
+        requested_liters = request.form.get("requested_liters")
+        fuel_provider_company_id = request.form.get("fuel_provider_company_id")
+        project_name = request.form.get("project_name")
+        comment = request.form.get("comment")
+
+        execute_query("""
+            INSERT INTO fuel_requests (
+                requester_user_id,
+                requester_company_id,
+                vehicle_id,
+                object_id,
+                project_name,
+                requested_liters,
+                fuel_provider_company_id,
+                comment,
+                status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'new')
+        """, (
+            user["id"],
+            user["company_id"],
+            vehicle_id,
+            object_id,
+            project_name,
+            requested_liters,
+            fuel_provider_company_id,
+            comment
+        ))
+
+        flash("Заявка успешно создана", "success")
+        return redirect(url_for("requests_bp.requests_list"))
+
+    vehicles = fetch_all("""
+        SELECT id, license_plate, brand
+        FROM vehicles
+        WHERE is_active = TRUE
+        ORDER BY license_plate
+    """)
+
+    objects = fetch_all("""
+        SELECT id, name
+        FROM objects
+        WHERE is_active = TRUE
+        ORDER BY name
+    """)
+
+    companies = fetch_all("""
+        SELECT id, name
+        FROM companies
+        WHERE is_active = TRUE
+        ORDER BY name
+    """)
+
+    html = """
+    <h2>Новая заявка</h2>
+    <form method="post" style="max-width: 700px;">
+        <div style="margin-bottom: 12px;">
+            <label>Транспорт</label><br>
+            <select name="vehicle_id" class="form-control" required>
+                <option value="">Выберите транспорт</option>
+    """
+
+    for v in vehicles:
+        vehicle_name = f"{v.get('license_plate') or ''}"
+        if v.get("brand"):
+            vehicle_name += f" — {v['brand']}"
+        html += f'<option value="{v["id"]}">{vehicle_name}</option>'
+
+    html += """
+            </select>
+        </div>
+
+        <div style="margin-bottom: 12px;">
+            <label>Объект</label><br>
+            <select name="object_id" class="form-control" required>
+                <option value="">Выберите объект</option>
+    """
+
+    for o in objects:
+        html += f'<option value="{o["id"]}">{o["name"]}</option>'
+
+    html += """
+            </select>
+        </div>
+
+        <div style="margin-bottom: 12px;">
+            <label>Проект</label><br>
+            <input type="text" name="project_name" class="form-control" placeholder="Название проекта">
+        </div>
+
+        <div style="margin-bottom: 12px;">
+            <label>Количество литров</label><br>
+            <input type="number" step="0.01" min="0" name="requested_liters" class="form-control" required>
+        </div>
+
+        <div style="margin-bottom: 12px;">
+            <label>Какая компания обеспечивает топливо</label><br>
+            <select name="fuel_provider_company_id" class="form-control" required>
+                <option value="">Выберите компанию</option>
+    """
+
+    for c in companies:
+        html += f'<option value="{c["id"]}">{c["name"]}</option>'
+
+    html += """
+            </select>
+        </div>
+
+        <div style="margin-bottom: 12px;">
+            <label>Комментарий</label><br>
+            <textarea name="comment" class="form-control" rows="4"></textarea>
+        </div>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button type="submit" class="btn btn-success">Отправить заявку</button>
+            <a href="/requests" class="btn btn-secondary">Назад</a>
+        </div>
+    </form>
+    """
+
+    return render_page("Новая заявка", html)
 
 
 @requests_bp.route("/requests/<int:request_id>/approve", methods=["POST"])
@@ -187,7 +343,7 @@ def approve_request(request_id):
     approved_liters = request.form.get("approved_liters")
 
     if not fuel_station_id:
-        flash("Заправка танланмаган", "danger")
+        flash("АЗС не выбрана", "danger")
         return redirect(url_for("requests_bp.requests_list"))
 
     station = fetch_one("""
@@ -197,13 +353,11 @@ def approve_request(request_id):
     """, (fuel_station_id,))
 
     if not station:
-        flash("Заправка топилмади", "danger")
+        flash("АЗС не найдена", "danger")
         return redirect(url_for("requests_bp.requests_list"))
 
-    # ЭНГ МУҲИМИ:
-    # Раҳбар фақат ўз компаниясига тегишли заправкани танлай олади
     if user["role"] != "admin" and station["company_id"] != user["company_id"]:
-        flash("Сиз фақат ўз компаниянгизга тегишли заправкани танлай оласиз", "danger")
+        flash("Вы можете выбрать только АЗС своей компании", "danger")
         return redirect(url_for("requests_bp.requests_list"))
 
     execute_query("""
@@ -216,7 +370,7 @@ def approve_request(request_id):
         WHERE id = %s
     """, (fuel_station_id, approved_liters, user["id"], request_id))
 
-    flash("Заявка рухсат қилинди ва тегишли заправкага юборилди", "success")
+    flash("Заявка одобрена и отправлена на выбранную АЗС", "success")
     return redirect(url_for("requests_bp.requests_list"))
 
 
@@ -227,7 +381,6 @@ def fuel_request(request_id):
     user = get_current_user()
     fueled_liters = request.form.get("fueled_liters")
 
-    # Оператор фақат ўзига тегишли ва ўз компаниясига тегишли заявкани қайта ишлай олади
     req = fetch_one("""
         SELECT fr.id, fr.status, fr.fuel_station_id, fs.operator_user_id, fs.company_id
         FROM fuel_requests fr
@@ -236,12 +389,12 @@ def fuel_request(request_id):
     """, (request_id,))
 
     if not req:
-        flash("Заявка топилмади", "danger")
+        flash("Заявка не найдена", "danger")
         return redirect(url_for("requests_bp.requests_list"))
 
     if user["role"] != "admin":
         if req["operator_user_id"] != user["id"] or req["company_id"] != user["company_id"]:
-            flash("Бу заявка сизга тегишли эмас", "danger")
+            flash("Заявка вам не принадлежит", "danger")
             return redirect(url_for("requests_bp.requests_list"))
 
     execute_query("""
@@ -253,7 +406,7 @@ def fuel_request(request_id):
         WHERE id = %s
     """, (fueled_liters, user["id"], request_id))
 
-    flash("Заправка маълумоти сақланди", "success")
+    flash("Данные о заправке сохранены", "success")
     return redirect(url_for("requests_bp.requests_list"))
 
 
@@ -262,7 +415,6 @@ def fuel_request(request_id):
 def driver_confirm_request(request_id):
     user = get_current_user()
 
-    # Бу ерни кейин transport/driver билан қаттиқроқ боғлаб кучайтириш мумкин
     req = fetch_one("""
         SELECT id, status
         FROM fuel_requests
@@ -270,11 +422,11 @@ def driver_confirm_request(request_id):
     """, (request_id,))
 
     if not req:
-        flash("Заявка топилмади", "danger")
+        flash("Заявка не найдена", "danger")
         return redirect(url_for("requests_bp.requests_list"))
 
     if req["status"] != "fueled":
-        flash("Ҳали заправка қилинмаган", "warning")
+        flash("Заправка еще не выполнена", "warning")
         return redirect(url_for("requests_bp.requests_list"))
 
     execute_query("""
@@ -285,7 +437,7 @@ def driver_confirm_request(request_id):
         WHERE id = %s
     """, (user["id"], request_id))
 
-    flash("Олингани тасдиқланди", "success")
+    flash("Получение топлива подтверждено", "success")
     return redirect(url_for("requests_bp.requests_list"))
 
 
@@ -302,12 +454,12 @@ def dispatcher_check_request(request_id):
     """, (request_id,))
 
     if not req:
-        flash("Заявка топилмади", "danger")
+        flash("Заявка не найдена", "danger")
         return redirect(url_for("requests_bp.requests_list"))
 
     if user["role"] != "admin":
         if user["company_id"] not in [req["requester_company_id"], req["fuel_provider_company_id"]]:
-            flash("Сизга тегишли бўлмаган заявкани текширолмайсиз", "danger")
+            flash("Вы не можете проверять чужую заявку", "danger")
             return redirect(url_for("requests_bp.requests_list"))
 
     execute_query("""
@@ -318,5 +470,5 @@ def dispatcher_check_request(request_id):
         WHERE id = %s
     """, (user["id"], request_id))
 
-    flash("Заявка якунланди", "success")
+    flash("Заявка завершена", "success")
     return redirect(url_for("requests_bp.requests_list"))
