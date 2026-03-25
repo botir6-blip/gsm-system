@@ -55,8 +55,9 @@ def parse_request_comment(comment_text):
 
     return data
 
-
 def build_request_form(user, objects, vehicles, companies, form_data=None, request_id=None):
+    import json
+
     form_data = form_data or {}
 
     object_name = form_data.get("object_name", "")
@@ -70,10 +71,17 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
     comment = form_data.get("comment", "")
     approval_type = form_data.get("approval_type", "internal")
 
+    def esc(val):
+        return str(val or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
+
     vehicle_data = {}
+
+    title_text = "Изменить заявку" if request_id else "Новая заявка"
+    button_text = "Сохранить изменения" if request_id else "Отправить заявку"
+
     content = f"""
     <div style='max-width:760px; margin:0 auto;'>
-        <h2 style='margin-bottom:16px;'>{'Изменить заявку' if request_id else 'Новая заявка'}</h2>
+        <h2 style='margin-bottom:16px;'>{title_text}</h2>
 
         <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
 
@@ -83,7 +91,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                     type='text'
                     name='object_name'
                     list='objects_list'
-                    value='{object_name}'
+                    value='{esc(object_name)}'
                     placeholder='Начните вводить название объекта'
                     autocomplete='off'
                     style='width:100%; padding:8px;'
@@ -93,9 +101,9 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
     """
 
     for o in objects:
-        content += f"<option value='{o['name']}'></option>"
+        content += f"<option value='{esc(o['name'])}'></option>"
 
-    content += """
+    content += f"""
                 </datalist>
             </div>
 
@@ -105,7 +113,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                     type='text'
                     name='vehicle_label'
                     list='vehicles_list'
-                    value='""" + f"""{vehicle_label}""" + """'
+                    value='{esc(vehicle_label)}'
                     placeholder='Начните вводить гос.номер'
                     autocomplete='off'
                     style='width:100%; padding:8px;'
@@ -120,10 +128,10 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
         norm = (v.get("fuel_norm") or "").strip()
 
         if plate:
-            content += f"<option value='{plate}'></option>"
+            content += f"<option value='{esc(plate)}'></option>"
             vehicle_data[plate] = {"name": name, "norm": norm}
 
-    content += """
+    content += f"""
                 </datalist>
                 <div id='norm_info' style='margin-top:6px; color:green; font-weight:bold;'></div>
             </div>
@@ -131,8 +139,8 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
             <div>
                 <label><b>3. Тип согласования:</b></label><br>
                 <select name='approval_type' style='width:100%; padding:8px;' required>
-                    <option value='internal' """ + ("selected" if approval_type == "internal" else "") + """>Внутренний транспорт</option>
-                    <option value='external' """ + ("selected" if approval_type == "external" else "") + """>Сторонний транспорт</option>
+                    <option value='internal' {"selected" if approval_type == "internal" else ""}>Внутренний транспорт</option>
+                    <option value='external' {"selected" if approval_type == "external" else ""}>Сторонний транспорт</option>
                 </select>
             </div>
 
@@ -141,7 +149,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                 <input
                     type='text'
                     name='requested_by'
-                    value='""" + f"""{requested_by}""" + """'
+                    value='{esc(requested_by)}'
                     placeholder='ФИО'
                     style='width:100%; padding:8px;'
                 >
@@ -152,7 +160,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                 <input
                     type='text'
                     name='project_name'
-                    value='""" + f"""{project_name}""" + """'
+                    value='{esc(project_name)}'
                     placeholder='Название проекта'
                     style='width:100%; padding:8px;'
                 >
@@ -165,7 +173,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                     step='0.01'
                     min='0'
                     name='requested_liters'
-                    value='""" + f"""{requested_liters}""" + """'
+                    value='{esc(requested_liters)}'
                     style='width:100%; padding:8px;'
                     required
                 >
@@ -179,9 +187,9 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
 
     for c in companies:
         selected = "selected" if fuel_provider_company_id == str(c["id"]) else ""
-        content += f"<option value='{c['id']}' {selected}>{c['name']}</option>"
+        content += f"<option value='{c['id']}' {selected}>{esc(c['name'])}</option>"
 
-    content += """
+    content += f"""
                 </select>
             </div>
 
@@ -190,7 +198,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                 <input
                     type='text'
                     name='tank_balance'
-                    value='""" + f"""{tank_balance}""" + """'
+                    value='{esc(tank_balance)}'
                     placeholder='Например: 40 л'
                     style='width:100%; padding:8px;'
                 >
@@ -203,7 +211,7 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                     rows='3'
                     placeholder='Укажите маршрут или объем работ'
                     style='width:100%; padding:8px;'
-                >""" + f"""{route_work}""" + """</textarea>
+                >{esc(route_work)}</textarea>
             </div>
 
             <div>
@@ -213,11 +221,11 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
                     rows='4'
                     placeholder='Дополнительная информация'
                     style='width:100%; padding:8px;'
-                >""" + f"""{comment}""" + """</textarea>
+                >{esc(comment)}</textarea>
             </div>
 
             <div style='display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;'>
-                <button type='submit' class='btn btn-success'>""" + ("Сохранить изменения" if request_id else "Отправить заявку") + """</button>
+                <button type='submit' class='btn btn-success'>{button_text}</button>
                 <a href='/requests' class='btn btn-secondary'>Назад</a>
             </div>
 
@@ -225,16 +233,12 @@ def build_request_form(user, objects, vehicles, companies, form_data=None, reque
     </div>
     """
 
-    norms_js = "<script>\nconst vehicleData = {\n"
-    for plate, info in vehicle_data.items():
-        safe_plate = plate.replace("'", "\\'")
-        safe_name = (info["name"] or "").replace("'", "\\'")
-        safe_norm = (info["norm"] or "").replace("'", "\\'")
-        norms_js += f"'{safe_plate}': {{name: '{safe_name}', norm: '{safe_norm}'}},\n"
+    vehicle_data_json = json.dumps(vehicle_data, ensure_ascii=False)
+    safe_current_plate = json.dumps(vehicle_label or "", ensure_ascii=False)
 
-    safe_current_plate = vehicle_label.replace("'", "\\'")
-
-    norms_js += f"""};
+    norms_js = f"""
+<script>
+const vehicleData = {vehicle_data_json};
 const vehicleInput = document.querySelector("input[name='vehicle_label']");
 const normInfo = document.getElementById("norm_info");
 
@@ -252,9 +256,10 @@ if (vehicleInput && normInfo) {{
     vehicleInput.addEventListener("input", function() {{
         updateNormInfo(this.value);
     }});
-    updateNormInfo('{safe_current_plate}');
+    updateNormInfo({safe_current_plate});
 }}
-</script>"""
+</script>
+"""
 
     content += norms_js
     return content
