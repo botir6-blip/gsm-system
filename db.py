@@ -229,7 +229,8 @@ def init_db():
 
     user_columns = {
         "company_id": "INTEGER REFERENCES companies(id) ON DELETE SET NULL",
-        "is_active": "BOOLEAN NOT NULL DEFAULT TRUE"
+        "is_active": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "position": "VARCHAR(100)"
     }
     for col_name, col_type in user_columns.items():
         if not column_exists(cur, "users", col_name):
