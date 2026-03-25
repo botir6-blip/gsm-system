@@ -349,17 +349,10 @@ def new_request():
         veh = fetch_one("""
             SELECT
                 id,
-                brand,
-                vehicle_type,
-                license_plate
+                vehicle_name,
+                plate_number
             FROM vehicles
-            WHERE CONCAT(
-                COALESCE(license_plate, ''),
-                ' | ',
-                COALESCE(brand, ''),
-                ' | ',
-                COALESCE(vehicle_type, '')
-            ) = %s
+            WHERE plate_number = %s
             LIMIT 1
         """, (vehicle_label,))
 
@@ -424,12 +417,12 @@ def new_request():
     vehicles = fetch_all("""
         SELECT
             id,
-            brand,
-            vehicle_type,
-            license_plate
+            vehicle_name,
+            plate_number,
+            fuel_norm
         FROM vehicles
         WHERE is_active = TRUE
-        ORDER BY license_plate
+        ORDER BY plate_number
     """)
 
     companies = fetch_all("""
@@ -483,8 +476,12 @@ def new_request():
     """
 
     for v in vehicles:
-        label = f"{v.get('license_plate') or ''} | {v.get('brand') or ''} | {v.get('vehicle_type') or ''}"
-        content += f"<option value='{label}'></option>"
+        plate = v.get('plate_number') or ''
+        name = v.get('vehicle_name') or ''
+        norm = v.get('fuel_norm') or ''
+
+        if plate:
+            content += f"<option value='{plate}'>{plate} | {name} | норма: {norm}</option>"
 
     content += """
                 </datalist>
