@@ -91,11 +91,12 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        full_name VARCHAR(150) NOT NULL,
+        full_name VARCHAR(200) NOT NULL,
         username VARCHAR(100) NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
         role VARCHAR(30) NOT NULL,
         company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        position VARCHAR(200),
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -181,7 +182,7 @@ def init_db():
         SET approval_type = 'internal'
         WHERE approval_type IS NULL
     """)
-    
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fuel_transactions (
         id SERIAL PRIMARY KEY,
@@ -235,6 +236,18 @@ def init_db():
     for col_name, col_type in user_columns.items():
         if not column_exists(cur, "users", col_name):
             cur.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+
+    if column_exists(cur, "users", "position"):
+        cur.execute("""
+            ALTER TABLE users
+            ALTER COLUMN position TYPE VARCHAR(200)
+        """)
+
+    if column_exists(cur, "users", "full_name"):
+        cur.execute("""
+            ALTER TABLE users
+            ALTER COLUMN full_name TYPE VARCHAR(200)
+        """)
 
     request_columns = {
         "requester_company_id": "INTEGER REFERENCES companies(id) ON DELETE SET NULL",
