@@ -327,23 +327,72 @@ def new_request():
     user = get_current_user()
 
     if request.method == "POST":
-        vehicle_id = request.form.get("vehicle_id")
-        object_id = request.form.get("object_id")
-        requested_liters = request.form.get("requested_liters")
-        fuel_provider_company_id = request.form.get("fuel_provider_company_id")
-        project_name = request.form.get("project_name")
-        comment = request.form.get("comment")
+        object_name = (request.form.get("object_name") or "").strip()
+        vehicle_label = (request.form.get("vehicle_label") or "").strip()
 
-        if not vehicle_id or not object_id or not requested_liters or not fuel_provider_company_id:
-            flash("Заполните все обязательные поля", "danger")
-            return redirect(url_for("requests_bp.new_request"))
+        requested_liters = request.form.get("requested_liters") or 0
+        requested_by = (request.form.get("requested_by") or "").strip()
+        project_name = (request.form.get("project_name") or "").strip()
+        fuel_provider_company_id = request.form.get("fuel_provider_company_id") or None
+        tank_balance = (request.form.get("tank_balance") or "").strip()
+        route_work = (request.form.get("route_work") or "").strip()
+        comment = (request.form.get("comment") or "").strip()
+        approval_type = (request.form.get("approval_type") or "internal").strip()
+
+        obj = fetch_one("""
+            SELECT id, name
+            FROM objects
+            WHERE name = %s
+            LIMIT 1
+        """, (object_name,))
+
+        veh = fetch_one("""
+            SELECT
+                id,
+                brand,
+                vehicle_type,
+                license_plate
+            FROM vehicles
+            WHERE CONCAT(
+                COALESCE(license_plate, ''),
+                ' | ',
+                COALESCE(brand, ''),
+                ' | ',
+                COALESCE(vehicle_type, '')
+            ) = %s
+            LIMIT 1
+        """, (vehicle_label,))
+
+        if not obj:
+            return render_page(
+                "Ошибка",
+                "<p>Объект не выбран из списка. Вернитесь назад и выберите объект из поиска.</p>"
+            )
+
+        if not veh:
+            return render_page(
+                "Ошибка",
+                "<p>Транспорт не выбран из списка. Вернитесь назад и выберите транспорт из поиска.</p>"
+            )
+
+        if not fuel_provider_company_id:
+            return render_page(
+                "Ошибка",
+                "<p>Выберите компанию, за чей счет выдается топливо.</p>"
+            )
+
+        full_comment = f"""Подал: {requested_by or (user.get('full_name') or '')}
+Тип заявки: {"Сторонний транспорт" if approval_type == "external" else "Внутренний транспорт"}
+Остаток в баке: {tank_balance}
+Маршрут / объем работ: {route_work}
+Комментарий: {comment}"""
 
         execute_query("""
             INSERT INTO fuel_requests (
                 requester_user_id,
                 requester_company_id,
-                vehicle_id,
                 object_id,
+                vehicle_id,
                 project_name,
                 requested_liters,
                 fuel_provider_company_id,
@@ -354,29 +403,33 @@ def new_request():
         """, (
             user["id"],
             user["company_id"],
-            vehicle_id,
-            object_id,
+            obj["id"],
+            veh["id"],
             project_name,
             requested_liters,
             fuel_provider_company_id,
-            comment
+            full_comment
         ))
 
         flash("Заявка создана", "success")
-        return redirect(url_for("requests_bp.requests_list"))
-
-    vehicles = fetch_all("""
-        SELECT id, brand, license_plate
-        FROM vehicles
-        WHERE is_active = TRUE
-        ORDER BY license_plate
-    """)
+        return redirect("/requests")
 
     objects = fetch_all("""
         SELECT id, name
         FROM objects
         WHERE is_active = TRUE
         ORDER BY name
+    """)
+
+    vehicles = fetch_all("""
+        SELECT
+            id,
+            brand,
+            vehicle_type,
+            license_plate
+        FROM vehicles
+        WHERE is_active = TRUE
+        ORDER BY license_plate
     """)
 
     companies = fetch_all("""
@@ -386,72 +439,152 @@ def new_request():
         ORDER BY name
     """)
 
-    html = """
-    <h2>Новая заявка</h2>
+    current_user_name = user.get("full_name") or ""
 
-    <form method="post" style="max-width:700px;">
-        <div style="margin-bottom:12px;">
-            <label>Транспорт</label><br>
-            <select name="vehicle_id" class="form-control" required>
-                <option value="">Выберите транспорт</option>
-    """
+    content = f"""
+    <div style='max-width:760px; margin:0 auto;'>
+        <h2 style='margin-bottom:16px;'>Новая заявка</h2>
 
-    for v in vehicles:
-        text = (v.get("license_plate") or "")
-        if v.get("brand"):
-            text += f" — {v['brand']}"
-        html += f'<option value="{v["id"]}">{text}</option>'
+        <form method='post' style='display:flex; flex-direction:column; gap:12px;'>
 
-    html += """
-            </select>
-        </div>
-
-        <div style="margin-bottom:12px;">
-            <label>Объект</label><br>
-            <select name="object_id" class="form-control" required>
-                <option value="">Выберите объект</option>
+            <div>
+                <label><b>1. Объект заправки:</b></label><br>
+                <input
+                    type='text'
+                    name='object_name'
+                    list='objects_list'
+                    placeholder='Начните вводить название объекта'
+                    autocomplete='off'
+                    style='width:100%; padding:8px;'
+                    required
+                >
+                <datalist id='objects_list'>
     """
 
     for o in objects:
-        html += f'<option value="{o["id"]}">{o["name"]}</option>'
+        content += f"<option value='{o['name']}'></option>"
 
-    html += """
-            </select>
-        </div>
+    content += """
+                </datalist>
+            </div>
 
-        <div style="margin-bottom:12px;">
-            <label>Проект</label><br>
-            <input type="text" name="project_name" class="form-control">
-        </div>
+            <div>
+                <label><b>2. Транспорт:</b></label><br>
+                <input
+                    type='text'
+                    name='vehicle_label'
+                    list='vehicles_list'
+                    placeholder='Начните вводить гос.номер, транспорт или тип'
+                    autocomplete='off'
+                    style='width:100%; padding:8px;'
+                    required
+                >
+                <datalist id='vehicles_list'>
+    """
 
-        <div style="margin-bottom:12px;">
-            <label>Количество литров</label><br>
-            <input type="number" step="0.01" min="0" name="requested_liters" class="form-control" required>
-        </div>
+    for v in vehicles:
+        label = f"{v.get('license_plate') or ''} | {v.get('brand') or ''} | {v.get('vehicle_type') or ''}"
+        content += f"<option value='{label}'></option>"
 
-        <div style="margin-bottom:12px;">
-            <label>Поставщик топлива</label><br>
-            <select name="fuel_provider_company_id" class="form-control" required>
-                <option value="">Выберите компанию</option>
+    content += """
+                </datalist>
+            </div>
+
+            <div>
+                <label><b>3. Тип согласования:</b></label><br>
+                <select name='approval_type' style='width:100%; padding:8px;' required>
+                    <option value='internal'>Внутренний транспорт</option>
+                    <option value='external'>Сторонний транспорт</option>
+                </select>
+            </div>
+    """
+
+    content += f"""
+            <div>
+                <label><b>4. Кто подает заявку:</b></label><br>
+                <input
+                    type='text'
+                    name='requested_by'
+                    value='{current_user_name}'
+                    placeholder='ФИО'
+                    style='width:100%; padding:8px;'
+                >
+            </div>
+    """
+
+    content += """
+            <div>
+                <label><b>5. Проект:</b></label><br>
+                <input
+                    type='text'
+                    name='project_name'
+                    placeholder='Название проекта'
+                    style='width:100%; padding:8px;'
+                >
+            </div>
+
+            <div>
+                <label><b>6. Количество литров:</b></label><br>
+                <input
+                    type='number'
+                    step='0.01'
+                    min='0'
+                    name='requested_liters'
+                    style='width:100%; padding:8px;'
+                    required
+                >
+            </div>
+
+            <div>
+                <label><b>7. За чей счет выдается топливо:</b></label><br>
+                <select name='fuel_provider_company_id' style='width:100%; padding:8px;' required>
+                    <option value=''>Выберите компанию</option>
     """
 
     for c in companies:
-        html += f'<option value="{c["id"]}">{c["name"]}</option>'
+        content += f"<option value='{c['id']}'>{c['name']}</option>"
 
-    html += """
-            </select>
-        </div>
+    content += """
+                </select>
+            </div>
 
-        <div style="margin-bottom:12px;">
-            <label>Комментарий</label><br>
-            <textarea name="comment" class="form-control" rows="4"></textarea>
-        </div>
+            <div>
+                <label><b>8. Остаток в баке:</b></label><br>
+                <input
+                    type='text'
+                    name='tank_balance'
+                    placeholder='Например: 40 л'
+                    style='width:100%; padding:8px;'
+                >
+            </div>
 
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button type="submit" class="btn btn-success">Отправить</button>
-            <a href="/requests" class="btn btn-secondary">Назад</a>
-        </div>
-    </form>
+            <div>
+                <label><b>9. Маршрут / объем работ:</b></label><br>
+                <textarea
+                    name='route_work'
+                    rows='3'
+                    placeholder='Укажите маршрут или объем работ'
+                    style='width:100%; padding:8px;'
+                ></textarea>
+            </div>
+
+            <div>
+                <label><b>10. Комментарий:</b></label><br>
+                <textarea
+                    name='comment'
+                    rows='4'
+                    placeholder='Дополнительная информация'
+                    style='width:100%; padding:8px;'
+                ></textarea>
+            </div>
+
+            <div style='display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;'>
+                <button type='submit' class='btn btn-success'>Отправить заявку</button>
+                <a href='/requests' class='btn btn-secondary'>Назад</a>
+            </div>
+
+        </form>
+    </div>
     """
 
-    return render_page("Новая заявка", html)
+    return render_page("Новая заявка", content)
