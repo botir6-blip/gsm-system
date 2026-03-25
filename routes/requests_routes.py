@@ -389,7 +389,7 @@ def requests_list():
 
         if role in ["admin"] or (r.get("requester_user_id") == user_id and r.get("status") == "new"):
             actions += f"""
-            <div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;">
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
                 <a href="/requests/{r['id']}/edit" class="btn btn-warning btn-sm">Изменить</a>
                 <form method="post" action="/requests/{r['id']}/delete" onsubmit="return confirm('Удалить заявку?');" style="margin:0;">
                     <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
