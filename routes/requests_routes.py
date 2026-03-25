@@ -321,7 +321,137 @@ def dispatcher_check_request(request_id):
     flash("Заявка завершена", "success")
     return redirect(url_for("requests_bp.requests_list"))
 
-@requests_bp.route("/requests/new")
+@requests_bp.route("/requests/new", methods=["GET", "POST"])
 @login_required
-def new_request_redirect():
-    return redirect("/requests")
+def new_request():
+    user = get_current_user()
+
+    if request.method == "POST":
+        vehicle_id = request.form.get("vehicle_id")
+        object_id = request.form.get("object_id")
+        requested_liters = request.form.get("requested_liters")
+        fuel_provider_company_id = request.form.get("fuel_provider_company_id")
+        project_name = request.form.get("project_name")
+        comment = request.form.get("comment")
+
+        if not vehicle_id or not object_id or not requested_liters or not fuel_provider_company_id:
+            flash("Заполните все обязательные поля", "danger")
+            return redirect(url_for("requests_bp.new_request"))
+
+        execute_query("""
+            INSERT INTO fuel_requests (
+                requester_user_id,
+                requester_company_id,
+                vehicle_id,
+                object_id,
+                project_name,
+                requested_liters,
+                fuel_provider_company_id,
+                comment,
+                status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'new')
+        """, (
+            user["id"],
+            user["company_id"],
+            vehicle_id,
+            object_id,
+            project_name,
+            requested_liters,
+            fuel_provider_company_id,
+            comment
+        ))
+
+        flash("Заявка создана", "success")
+        return redirect(url_for("requests_bp.requests_list"))
+
+    vehicles = fetch_all("""
+        SELECT id, brand, license_plate
+        FROM vehicles
+        WHERE is_active = TRUE
+        ORDER BY license_plate
+    """)
+
+    objects = fetch_all("""
+        SELECT id, name
+        FROM objects
+        WHERE is_active = TRUE
+        ORDER BY name
+    """)
+
+    companies = fetch_all("""
+        SELECT id, name
+        FROM companies
+        WHERE is_active = TRUE
+        ORDER BY name
+    """)
+
+    html = """
+    <h2>Новая заявка</h2>
+
+    <form method="post" style="max-width:700px;">
+        <div style="margin-bottom:12px;">
+            <label>Транспорт</label><br>
+            <select name="vehicle_id" class="form-control" required>
+                <option value="">Выберите транспорт</option>
+    """
+
+    for v in vehicles:
+        text = (v.get("license_plate") or "")
+        if v.get("brand"):
+            text += f" — {v['brand']}"
+        html += f'<option value="{v["id"]}">{text}</option>'
+
+    html += """
+            </select>
+        </div>
+
+        <div style="margin-bottom:12px;">
+            <label>Объект</label><br>
+            <select name="object_id" class="form-control" required>
+                <option value="">Выберите объект</option>
+    """
+
+    for o in objects:
+        html += f'<option value="{o["id"]}">{o["name"]}</option>'
+
+    html += """
+            </select>
+        </div>
+
+        <div style="margin-bottom:12px;">
+            <label>Проект</label><br>
+            <input type="text" name="project_name" class="form-control">
+        </div>
+
+        <div style="margin-bottom:12px;">
+            <label>Количество литров</label><br>
+            <input type="number" step="0.01" min="0" name="requested_liters" class="form-control" required>
+        </div>
+
+        <div style="margin-bottom:12px;">
+            <label>Поставщик топлива</label><br>
+            <select name="fuel_provider_company_id" class="form-control" required>
+                <option value="">Выберите компанию</option>
+    """
+
+    for c in companies:
+        html += f'<option value="{c["id"]}">{c["name"]}</option>'
+
+    html += """
+            </select>
+        </div>
+
+        <div style="margin-bottom:12px;">
+            <label>Комментарий</label><br>
+            <textarea name="comment" class="form-control" rows="4"></textarea>
+        </div>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button type="submit" class="btn btn-success">Отправить</button>
+            <a href="/requests" class="btn btn-secondary">Назад</a>
+        </div>
+    </form>
+    """
+
+    return render_page("Новая заявка", html)
