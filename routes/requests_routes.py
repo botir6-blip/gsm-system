@@ -106,6 +106,23 @@ def normalize_approval_type(value):
     return "internal"
 
 
+def effective_approval_type(row):
+    """
+    Энг муҳим логика:
+    агар объект компанияси ва транспорт компанияси ҳар хил бўлса,
+    заявка автоматик ташқи (external) ҳисобланади.
+    """
+    object_company_id = row.get("object_company_id")
+    vehicle_company_id = row.get("vehicle_company_id")
+
+    if object_company_id and vehicle_company_id:
+        if object_company_id != vehicle_company_id:
+            return "external"
+        return "internal"
+
+    return normalize_approval_type(row.get("approval_type"))
+
+
 def request_company_ids(row):
     return {
         row.get("object_company_id"),
@@ -172,7 +189,7 @@ def can_check_request(row):
 
 def can_see_request_row(row):
     status = (row.get("status") or "").strip()
-    approval_type = normalize_approval_type(row.get("approval_type"))
+    approval_type = effective_approval_type(row)
 
     if status == "checked":
         return False
@@ -208,7 +225,7 @@ def can_approve_request(row):
     if not object_company_matches(row):
         return False
 
-    approval_type = normalize_approval_type(row.get("approval_type"))
+    approval_type = effective_approval_type(row)
 
     if is_internal_approver():
         return approval_type == "internal"
@@ -376,7 +393,7 @@ def requests_page():
 
             approval_type_label = (
                 "Сторонний транспорт"
-                if normalize_approval_type(r["approval_type"]) == "external"
+                if effective_approval_type(r) == "external"
                 else "Внутренний транспорт"
             )
 
@@ -439,7 +456,6 @@ def new_request():
         tank_balance = request.form.get("tank_balance") or ""
         route_work = request.form.get("route_work") or ""
         comment = request.form.get("comment") or ""
-        approval_type = normalize_approval_type(request.form.get("approval_type"))
 
         obj = fetch_one("""
             SELECT id, name, company_id
@@ -489,6 +505,13 @@ def new_request():
                 "Ошибка",
                 "<p>Выберите заправку.</p>"
             )
+
+        # Автоматически определяем тип согласования.
+        # Это устраняет ошибки ручного выбора.
+        if obj.get("company_id") and veh.get("company_id"):
+            approval_type = "external" if obj["company_id"] != veh["company_id"] else "internal"
+        else:
+            approval_type = normalize_approval_type(request.form.get("approval_type"))
 
         full_comment = f"""Остаток в баке: {tank_balance}
 Маршрут / объем работ: {route_work}
@@ -611,6 +634,7 @@ def new_request():
                     <option value='internal'>Внутренний транспорт</option>
                     <option value='external'>Сторонний транспорт</option>
                 </select>
+                <small style='color:#666;'>Система автоматически проверит объект и транспорт и при необходимости сама исправит тип согласования.</small>
             </div>
 
             <div>
@@ -737,7 +761,7 @@ def request_detail(request_id):
 
     approval_type_label = (
         "Сторонний транспорт"
-        if normalize_approval_type(r["approval_type"]) == "external"
+        if effective_approval_type(r) == "external"
         else "Внутренний транспорт"
     )
 
@@ -836,8 +860,8 @@ def request_detail(request_id):
                 <div style='margin-bottom:10px;'>
                     <label><b>Тип согласования:</b></label><br>
                     <select name='approval_type' style='width:100%; padding:8px;'>
-                        <option value='internal' {"selected" if normalize_approval_type(r["approval_type"]) == "internal" else ""}>Внутренний транспорт</option>
-                        <option value='external' {"selected" if normalize_approval_type(r["approval_type"]) == "external" else ""}>Сторонний транспорт</option>
+                        <option value='internal' {"selected" if effective_approval_type(r) == "internal" else ""}>Внутренний транспорт</option>
+                        <option value='external' {"selected" if effective_approval_type(r) == "external" else ""}>Сторонний транспорт</option>
                     </select>
                 </div>
 
@@ -956,9 +980,11 @@ def request_decision(request_id):
             r.status,
             r.requested_liters,
             COALESCE(r.approval_type, 'internal') AS approval_type,
-            o.company_id AS object_company_id
+            o.company_id AS object_company_id,
+            v.company_id AS vehicle_company_id
         FROM fuel_requests r
         LEFT JOIN objects o ON o.id = r.object_id
+        LEFT JOIN vehicles v ON v.id = r.vehicle_id
         WHERE r.id = %s
     """, (request_id,))
 
@@ -971,9 +997,11 @@ def request_decision(request_id):
     decision = request.form.get("decision")
     approved_liters = request.form.get("approved_liters") or req["requested_liters"]
     fuel_supplier = request.form.get("fuel_supplier") or ""
-    approval_type = normalize_approval_type(request.form.get("approval_type") or req["approval_type"])
     approval_comment = request.form.get("approval_comment") or ""
     approver = current_user_name()
+
+    # Тут ҳам автоматик аниқлаймиз
+    approval_type = effective_approval_type(req)
 
     if decision == "reject":
         execute_query("""
