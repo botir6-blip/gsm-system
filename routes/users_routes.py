@@ -17,6 +17,7 @@ users_bp = Blueprint("users_bp", __name__)
 def users_page():
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
+        position = request.form.get("position", "").strip()
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
         role = request.form.get("role", "").strip()
@@ -32,10 +33,11 @@ def users_page():
             return redirect(url_for("users_bp.users_page"))
 
         execute_query("""
-            INSERT INTO users (full_name, username, password_hash, role, company_id, is_active)
-            VALUES (%s, %s, %s, %s, %s, TRUE)
+            INSERT INTO users (full_name, position, username, password_hash, role, company_id, is_active)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
         """, (
             full_name,
+            position or None,
             username,
             generate_password_hash(password),
             role,
@@ -63,6 +65,7 @@ def users_page():
         <tr>
             <td>{u['id']}</td>
             <td>{u['full_name']}</td>
+            <td>{u['position'] or ''}</td>
             <td>{u['username']}</td>
             <td>{get_role_name(u['role'])}</td>
             <td>{u['company_name'] or ''}</td>
@@ -80,6 +83,7 @@ def users_page():
         <h3>Добавить пользователя</h3>
         <form method="POST">
             <input type="text" name="full_name" placeholder="ФИО" required>
+            <input type="text" name="position" placeholder="Должность">
             <input type="text" name="username" placeholder="Логин" required>
             <input type="password" name="password" placeholder="Пароль" required>
             <select name="role" required>
@@ -106,6 +110,7 @@ def users_page():
             <tr>
                 <th>ID</th>
                 <th>ФИО</th>
+                <th>Должность</th>
                 <th>Логин</th>
                 <th>Роль</th>
                 <th>Компания</th>
@@ -132,6 +137,7 @@ def edit_user(user_id):
 
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
+        position = request.form.get("position", "").strip()
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
         role = request.form.get("role", "").strip()
@@ -150,18 +156,31 @@ def edit_user(user_id):
         if password:
             execute_query("""
                 UPDATE users
-                SET full_name=%s, username=%s, password_hash=%s, role=%s, company_id=%s, is_active=%s
+                SET full_name=%s, position=%s, username=%s, password_hash=%s, role=%s, company_id=%s, is_active=%s
                 WHERE id=%s
             """, (
-                full_name, username, generate_password_hash(password), role, company_id, is_active, user_id
+                full_name,
+                position or None,
+                username,
+                generate_password_hash(password),
+                role,
+                company_id,
+                is_active,
+                user_id
             ))
         else:
             execute_query("""
                 UPDATE users
-                SET full_name=%s, username=%s, role=%s, company_id=%s, is_active=%s
+                SET full_name=%s, position=%s, username=%s, role=%s, company_id=%s, is_active=%s
                 WHERE id=%s
             """, (
-                full_name, username, role, company_id, is_active, user_id
+                full_name,
+                position or None,
+                username,
+                role,
+                company_id,
+                is_active,
+                user_id
             ))
 
         flash("Пользователь обновлен.", "success")
@@ -179,6 +198,7 @@ def edit_user(user_id):
         <h3>Редактирование пользователя</h3>
         <form method="POST">
             <input type="text" name="full_name" value="{user_row['full_name']}" required>
+            <input type="text" name="position" value="{user_row['position'] or ''}" placeholder="Должность">
             <input type="text" name="username" value="{user_row['username']}" required>
             <input type="password" name="password" placeholder="Новый пароль (если нужно)">
             <select name="role" required>
