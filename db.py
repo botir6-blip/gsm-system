@@ -1,502 +1,479 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from werkzeug.security import generate_password_hash
+from flask import g, has_request_context
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+ROLE_LABELS = {
+    "fuel_operator": "Оператор ГСМ",
+    "ats": "Проверяющий АТС",
+    "viewer": "Только просмотр",
+    "admin": "Администратор",
+}
+
+AUDIT_SUCCESS_LABELS = {
+    True: "Успешно",
+    False: "Ошибка",
+}
+
+ERIELL_DIVISIONS = ("ЭНГС", "ELAT", "Тампонаж")
+DEFAULT_DENSITY = 0.84
+WAREHOUSE_POINT_TYPES = ("WAREHOUSE", "TANK", "STORAGE")
+
+POINT_TYPE_LABELS = {
+    "WAREHOUSE": "ГСМ склад",
+    "TANK": "ГСМ склад",
+    "STORAGE": "ГСМ склад",
+    "AZS": "АЗС",
+    "PAZS": "ПАЗС",
+    "BRIGADE": "Бригада",
+    "EXTERNAL_OBJECT": "Внешний объект",
+}
+
+
+def _create_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
 
 def get_connection():
-    return psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require"
-    )
+    if has_request_context():
+        conn = getattr(g, "_db_conn", None)
+        if conn is None or getattr(conn, "closed", 1):
+            conn = _create_connection()
+            g._db_conn = conn
+        return conn
+    return _create_connection()
 
 
-def fetch_all(query, params=None):
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+def close_db_connection(exception=None):
+    if not has_request_context():
+        return
+    conn = g.pop("_db_conn", None)
+    if conn is None:
+        return
     try:
-        cur.execute(query, params or ())
-        rows = cur.fetchall()
-        return rows
-    finally:
-        cur.close()
         conn.close()
+    except Exception:
+        pass
 
 
-def fetch_one(query, params=None):
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    try:
-        cur.execute(query, params or ())
-        row = cur.fetchone()
-        return row
-    finally:
-        cur.close()
-        conn.close()
-
-
-def execute_query(query, params=None):
+def fetch_all(query, params=()):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute(query, params or ())
+        cur.execute(query, params)
+        return cur.fetchall()
+    finally:
+        cur.close()
+        if not has_request_context():
+            conn.close()
+
+
+def fetch_one(query, params=()):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(query, params)
+        return cur.fetchone()
+    finally:
+        cur.close()
+        if not has_request_context():
+            conn.close()
+
+
+def execute_query(query, params=()):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(query, params)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         cur.close()
-        conn.close()
+        if not has_request_context():
+            conn.close()
 
 
-def column_exists(table_name, column_name):
-    row = fetch_one("""
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = %s AND column_name = %s
-    """, (table_name, column_name))
-    return row is not None
+def execute_query_returning(query, params=()):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(query, params)
+        row = cur.fetchone()
+        conn.commit()
+        return row
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        if not has_request_context():
+            conn.close()
 
 
-def table_exists(table_name):
-    row = fetch_one("""
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_name = %s
-    """, (table_name,))
-    return row is not None
-
-
-def ensure_column(table_name, column_name, ddl_sql):
-    if not column_exists(table_name, column_name):
-        execute_query(ddl_sql)
-
-
-def ensure_users_columns():
-    if not table_exists("users"):
-        return
-
-    ensure_column(
-        "users",
-        "full_name",
-        "ALTER TABLE users ADD COLUMN full_name VARCHAR(150)"
-    )
-    ensure_column(
-        "users",
-        "role",
-        "ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'user'"
-    )
-    ensure_column(
-        "users",
-        "company_id",
-        "ALTER TABLE users ADD COLUMN company_id INTEGER"
-    )
-    ensure_column(
-        "users",
-        "is_active",
-        "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE"
-    )
-    ensure_column(
-        "users",
-        "created_at",
-        "ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    )
-
-
-def ensure_companies_columns():
-    if not table_exists("companies"):
-        return
-
-    ensure_column(
-        "companies",
-        "name",
-        "ALTER TABLE companies ADD COLUMN name VARCHAR(150)"
-    )
-    ensure_column(
-        "companies",
-        "is_active",
-        "ALTER TABLE companies ADD COLUMN is_active BOOLEAN DEFAULT TRUE"
-    )
-    ensure_column(
-        "companies",
-        "created_at",
-        "ALTER TABLE companies ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    )
-
-
-def ensure_objects_columns():
-    if not table_exists("objects"):
-        return
-
-    ensure_column(
-        "objects",
-        "name",
-        "ALTER TABLE objects ADD COLUMN name VARCHAR(150)"
-    )
-    ensure_column(
-        "objects",
-        "company_id",
-        "ALTER TABLE objects ADD COLUMN company_id INTEGER"
-    )
-    ensure_column(
-        "objects",
-        "is_active",
-        "ALTER TABLE objects ADD COLUMN is_active BOOLEAN DEFAULT TRUE"
-    )
-    ensure_column(
-        "objects",
-        "created_at",
-        "ALTER TABLE objects ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    )
-
-
-def ensure_vehicles_columns():
-    if not table_exists("vehicles"):
-        return
-
-    ensure_column(
-        "vehicles",
-        "brand",
-        "ALTER TABLE vehicles ADD COLUMN brand VARCHAR(100)"
-    )
-    ensure_column(
-        "vehicles",
-        "vehicle_type",
-        "ALTER TABLE vehicles ADD COLUMN vehicle_type VARCHAR(100)"
-    )
-    ensure_column(
-        "vehicles",
-        "license_plate",
-        "ALTER TABLE vehicles ADD COLUMN license_plate VARCHAR(50)"
-    )
-    ensure_column(
-        "vehicles",
-        "company_id",
-        "ALTER TABLE vehicles ADD COLUMN company_id INTEGER"
-    )
-    ensure_column(
-        "vehicles",
-        "is_active",
-        "ALTER TABLE vehicles ADD COLUMN is_active BOOLEAN DEFAULT TRUE"
-    )
-    ensure_column(
-        "vehicles",
-        "created_at",
-        "ALTER TABLE vehicles ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    )
-
-
-def ensure_fuel_stations_columns():
-    if not table_exists("fuel_stations"):
-        return
-
-    ensure_column(
-        "fuel_stations",
-        "name",
-        "ALTER TABLE fuel_stations ADD COLUMN name VARCHAR(150)"
-    )
-    ensure_column(
-        "fuel_stations",
-        "company_id",
-        "ALTER TABLE fuel_stations ADD COLUMN company_id INTEGER"
-    )
-    ensure_column(
-        "fuel_stations",
-        "operator_user_id",
-        "ALTER TABLE fuel_stations ADD COLUMN operator_user_id INTEGER"
-    )
-    ensure_column(
-        "fuel_stations",
-        "is_active",
-        "ALTER TABLE fuel_stations ADD COLUMN is_active BOOLEAN DEFAULT TRUE"
-    )
-    ensure_column(
-        "fuel_stations",
-        "created_at",
-        "ALTER TABLE fuel_stations ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    )
-
-
-def ensure_fuel_requests_columns():
-    if not table_exists("fuel_requests"):
-        return
-
-    ensure_column(
-        "fuel_requests",
-        "requester_user_id",
-        "ALTER TABLE fuel_requests ADD COLUMN requester_user_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "requester_company_id",
-        "ALTER TABLE fuel_requests ADD COLUMN requester_company_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "vehicle_id",
-        "ALTER TABLE fuel_requests ADD COLUMN vehicle_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "object_id",
-        "ALTER TABLE fuel_requests ADD COLUMN object_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "project_name",
-        "ALTER TABLE fuel_requests ADD COLUMN project_name VARCHAR(150)"
-    )
-    ensure_column(
-        "fuel_requests",
-        "requested_liters",
-        "ALTER TABLE fuel_requests ADD COLUMN requested_liters NUMERIC(12,2)"
-    )
-    ensure_column(
-        "fuel_requests",
-        "approved_liters",
-        "ALTER TABLE fuel_requests ADD COLUMN approved_liters NUMERIC(12,2)"
-    )
-    ensure_column(
-        "fuel_requests",
-        "fueled_liters",
-        "ALTER TABLE fuel_requests ADD COLUMN fueled_liters NUMERIC(12,2)"
-    )
-    ensure_column(
-        "fuel_requests",
-        "fuel_provider_company_id",
-        "ALTER TABLE fuel_requests ADD COLUMN fuel_provider_company_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "fuel_station_id",
-        "ALTER TABLE fuel_requests ADD COLUMN fuel_station_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "status",
-        "ALTER TABLE fuel_requests ADD COLUMN status VARCHAR(30) DEFAULT 'new'"
-    )
-    ensure_column(
-        "fuel_requests",
-        "comment",
-        "ALTER TABLE fuel_requests ADD COLUMN comment TEXT"
-    )
-    ensure_column(
-        "fuel_requests",
-        "approved_by_user_id",
-        "ALTER TABLE fuel_requests ADD COLUMN approved_by_user_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "approved_at",
-        "ALTER TABLE fuel_requests ADD COLUMN approved_at TIMESTAMP"
-    )
-    ensure_column(
-        "fuel_requests",
-        "fueled_by_user_id",
-        "ALTER TABLE fuel_requests ADD COLUMN fueled_by_user_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "fueled_at",
-        "ALTER TABLE fuel_requests ADD COLUMN fueled_at TIMESTAMP"
-    )
-    ensure_column(
-        "fuel_requests",
-        "driver_confirmed_by_user_id",
-        "ALTER TABLE fuel_requests ADD COLUMN driver_confirmed_by_user_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "driver_confirmed_at",
-        "ALTER TABLE fuel_requests ADD COLUMN driver_confirmed_at TIMESTAMP"
-    )
-    ensure_column(
-        "fuel_requests",
-        "dispatcher_checked_by_user_id",
-        "ALTER TABLE fuel_requests ADD COLUMN dispatcher_checked_by_user_id INTEGER"
-    )
-    ensure_column(
-        "fuel_requests",
-        "dispatcher_checked_at",
-        "ALTER TABLE fuel_requests ADD COLUMN dispatcher_checked_at TIMESTAMP"
-    )
-    ensure_column(
-        "fuel_requests",
-        "created_at",
-        "ALTER TABLE fuel_requests ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    )
-
-
-def ensure_fuel_transactions_columns():
-    if not table_exists("fuel_transactions"):
-        return
-
-    ensure_column(
-        "fuel_transactions",
-        "vehicle",
-        "ALTER TABLE fuel_transactions ADD COLUMN vehicle VARCHAR(50)"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "object_name",
-        "ALTER TABLE fuel_transactions ADD COLUMN object_name VARCHAR(100)"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "entry_type",
-        "ALTER TABLE fuel_transactions ADD COLUMN entry_type VARCHAR(20)"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "liters",
-        "ALTER TABLE fuel_transactions ADD COLUMN liters NUMERIC"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "odometer",
-        "ALTER TABLE fuel_transactions ADD COLUMN odometer INTEGER"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "entered_by",
-        "ALTER TABLE fuel_transactions ADD COLUMN entered_by VARCHAR(100)"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "driver_confirmed",
-        "ALTER TABLE fuel_transactions ADD COLUMN driver_confirmed BOOLEAN DEFAULT FALSE"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "dispatcher_status",
-        "ALTER TABLE fuel_transactions ADD COLUMN dispatcher_status VARCHAR(20) DEFAULT 'new'"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "comment",
-        "ALTER TABLE fuel_transactions ADD COLUMN comment TEXT"
-    )
-    ensure_column(
-        "fuel_transactions",
-        "created_at",
-        "ALTER TABLE fuel_transactions ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-    )
+def normalize_plate(plate: str) -> str:
+    if not plate:
+        return ""
+    return "".join(plate.upper().split())
 
 
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
 
-    try:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS companies (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(150) NOT NULL,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS companies (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(150) UNIQUE NOT NULL,
+            is_internal BOOLEAN DEFAULT FALSE,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(100),
-                password VARCHAR(255),
-                full_name VARCHAR(150),
-                role VARCHAR(50) DEFAULT 'user',
-                company_id INTEGER,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fuel_points (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            point_type VARCHAR(30) NOT NULL,
+            company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            address TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS objects (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(150) NOT NULL,
-                company_id INTEGER,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vehicles (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            division_name VARCHAR(100),
+            brand VARCHAR(100) NOT NULL,
+            vehicle_type VARCHAR(100),
+            plate_number VARCHAR(50) NOT NULL,
+            plate_normalized VARCHAR(50) UNIQUE NOT NULL,
+            fuel_rate_km NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_mh NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_ground NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_climate NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_special NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_stops NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_load_30 NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_load_60 NUMERIC(12,2) DEFAULT 0,
+            fuel_rate_load_75 NUMERIC(12,2) DEFAULT 0,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS vehicles (
-                id SERIAL PRIMARY KEY,
-                brand VARCHAR(100),
-                vehicle_type VARCHAR(100),
-                license_plate VARCHAR(50),
-                company_id INTEGER,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            full_name VARCHAR(150) NOT NULL,
+            phone VARCHAR(30),
+            username VARCHAR(80) UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role VARCHAR(30) NOT NULL,
+            position VARCHAR(100),
+            company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            fuel_point_id INTEGER REFERENCES fuel_points(id) ON DELETE SET NULL,
+            can_request_create BOOLEAN DEFAULT FALSE,
+            can_request_approve BOOLEAN DEFAULT FALSE,
+            can_request_check BOOLEAN DEFAULT FALSE,
+            is_super_admin BOOLEAN DEFAULT FALSE,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS fuel_stations (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(150) NOT NULL,
-                company_id INTEGER,
-                operator_user_id INTEGER,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS login_audit (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            username VARCHAR(80),
+            full_name VARCHAR(150),
+            role VARCHAR(30),
+            company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            company_name VARCHAR(150),
+            login_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            logout_time TIMESTAMP NULL,
+            ip_address VARCHAR(64),
+            user_agent TEXT,
+            browser_name VARCHAR(80),
+            os_name VARCHAR(80),
+            device_type VARCHAR(30),
+            is_success BOOLEAN NOT NULL DEFAULT TRUE,
+            fail_reason TEXT
+        );
+        """
+    )
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS fuel_requests (
-                id SERIAL PRIMARY KEY,
-                requester_user_id INTEGER,
-                requester_company_id INTEGER,
-                vehicle_id INTEGER,
-                object_id INTEGER,
-                project_name VARCHAR(150),
-                requested_liters NUMERIC(12,2),
-                approved_liters NUMERIC(12,2),
-                fueled_liters NUMERIC(12,2),
-                fuel_provider_company_id INTEGER,
-                fuel_station_id INTEGER,
-                status VARCHAR(30) DEFAULT 'new',
-                comment TEXT,
-                approved_by_user_id INTEGER,
-                approved_at TIMESTAMP,
-                fueled_by_user_id INTEGER,
-                fueled_at TIMESTAMP,
-                driver_confirmed_by_user_id INTEGER,
-                driver_confirmed_at TIMESTAMP,
-                dispatcher_checked_by_user_id INTEGER,
-                dispatcher_checked_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fuel_opening_balances (
+            id SERIAL PRIMARY KEY,
+            fuel_point_id INTEGER NOT NULL REFERENCES fuel_points(id) ON DELETE CASCADE,
+            balance_date DATE NOT NULL,
+            liters NUMERIC(12,2) NOT NULL CHECK (liters >= 0),
+            kg NUMERIC(12,2),
+            density NUMERIC(10,4),
+            temperature NUMERIC(10,2),
+            comment TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (fuel_point_id, balance_date)
+        );
+        """
+    )
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS fuel_transactions (
-                id SERIAL PRIMARY KEY,
-                vehicle VARCHAR(50),
-                object_name VARCHAR(100),
-                entry_type VARCHAR(20),
-                liters NUMERIC,
-                odometer INTEGER,
-                entered_by VARCHAR(100),
-                driver_confirmed BOOLEAN DEFAULT FALSE,
-                dispatcher_status VARCHAR(20) DEFAULT 'new',
-                comment TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
 
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fuel_requests (
+            id SERIAL PRIMARY KEY,
+            request_type VARCHAR(50) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'draft',
+            request_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            needed_at TIMESTAMP NULL,
+            source_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            receiver_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            liability_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            source_fuel_point_id INTEGER REFERENCES fuel_points(id) ON DELETE SET NULL,
+            source_point_name_manual VARCHAR(200),
+            vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+            external_plate_number VARCHAR(50),
+            driver_name VARCHAR(120),
+            requested_liters NUMERIC(14,2) DEFAULT 0,
+            requested_kg NUMERIC(14,2) DEFAULT 0,
+            approved_liters NUMERIC(14,2) DEFAULT 0,
+            approved_kg NUMERIC(14,2) DEFAULT 0,
+            actual_liters NUMERIC(14,2) DEFAULT 0,
+            actual_kg NUMERIC(14,2) DEFAULT 0,
+            density NUMERIC(10,4),
+            temperature NUMERIC(10,2),
+            purpose TEXT,
+            document_basis TEXT,
+            document_number VARCHAR(120),
+            approval_note TEXT,
+            comment TEXT,
+            requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            approved_at TIMESTAMP NULL,
+            checked_at TIMESTAMP NULL,
+            rejected_at TIMESTAMP NULL,
+            fuel_transaction_id INTEGER REFERENCES fuel_transactions(id) ON DELETE SET NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fuel_request_actions (
+            id SERIAL PRIMARY KEY,
+            request_id INTEGER NOT NULL REFERENCES fuel_requests(id) ON DELETE CASCADE,
+            action_type VARCHAR(40) NOT NULL,
+            old_status VARCHAR(30),
+            new_status VARCHAR(30),
+            action_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            note TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fuel_transactions (
+            id SERIAL PRIMARY KEY,
+            operation_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            fuel_point_id INTEGER NOT NULL REFERENCES fuel_points(id) ON DELETE CASCADE,
+            operation_type VARCHAR(30) NOT NULL,
+            receiver_type VARCHAR(20) DEFAULT 'vehicle',
+            liters NUMERIC(12,2) NOT NULL CHECK (liters >= 0),
+            kg NUMERIC(12,2),
+            density NUMERIC(10,4),
+            temperature NUMERIC(10,2),
+            vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+            destination_name VARCHAR(150),
+            destination_point_id INTEGER REFERENCES fuel_points(id) ON DELETE SET NULL,
+            document_date DATE,
+            speedometer INTEGER,
+            moto_hours NUMERIC(12,2),
+            waybill_number VARCHAR(100),
+            driver_name VARCHAR(150),
+            source_kind VARCHAR(30),
+            source_info TEXT,
+            delivery_method VARCHAR(30),
+            transport_reference VARCHAR(100),
+            destination_info TEXT,
+            task_basis TEXT,
+            work_purpose TEXT,
+            responsible_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+            document_number VARCHAR(100),
+            comment TEXT,
+            entered_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            ats_checked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            ats_checked_at TIMESTAMP,
+            ats_comment TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS company_reconciliation_openings (
+            id SERIAL PRIMARY KEY,
+            lender_company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            borrower_company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            balance_date DATE NOT NULL,
+            liters NUMERIC(14,2) NOT NULL DEFAULT 0,
+            kg NUMERIC(14,2) NOT NULL DEFAULT 0,
+            comment TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (lender_company_id, borrower_company_id, balance_date)
+        );
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS company_reconciliation_acts (
+            id SERIAL PRIMARY KEY,
+            lender_company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            borrower_company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            period_month DATE NOT NULL,
+            act_number VARCHAR(120),
+            act_date DATE,
+            opening_liters NUMERIC(14,2) NOT NULL DEFAULT 0,
+            opening_kg NUMERIC(14,2) NOT NULL DEFAULT 0,
+            issued_liters NUMERIC(14,2) NOT NULL DEFAULT 0,
+            issued_kg NUMERIC(14,2) NOT NULL DEFAULT 0,
+            returned_liters NUMERIC(14,2) NOT NULL DEFAULT 0,
+            returned_kg NUMERIC(14,2) NOT NULL DEFAULT 0,
+            closing_liters NUMERIC(14,2) NOT NULL DEFAULT 0,
+            closing_kg NUMERIC(14,2) NOT NULL DEFAULT 0,
+            note TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (lender_company_id, borrower_company_id, period_month)
+        );
+        """
+    )
+
+    # migrations for old databases
+    cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_internal BOOLEAN DEFAULT FALSE;")
+
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS position VARCHAR(100);")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_request_create BOOLEAN DEFAULT FALSE;")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_request_approve BOOLEAN DEFAULT FALSE;")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS can_request_check BOOLEAN DEFAULT FALSE;")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE;")
+
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS division_name VARCHAR(100);")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_km NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_mh NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_ground NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_climate NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_special NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_stops NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_load_30 NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_load_60 NUMERIC(12,2) DEFAULT 0;")
+    cur.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS fuel_rate_load_75 NUMERIC(12,2) DEFAULT 0;")
+
+    cur.execute("ALTER TABLE fuel_opening_balances ADD COLUMN IF NOT EXISTS kg NUMERIC(12,2);")
+    cur.execute("ALTER TABLE fuel_opening_balances ADD COLUMN IF NOT EXISTS density NUMERIC(10,4);")
+    cur.execute("ALTER TABLE fuel_opening_balances ADD COLUMN IF NOT EXISTS temperature NUMERIC(10,2);")
+
+    cur.execute("ALTER TABLE fuel_requests ADD COLUMN IF NOT EXISTS liability_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL;")
+    cur.execute("ALTER TABLE fuel_requests ADD COLUMN IF NOT EXISTS approval_note TEXT;")
+
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS receiver_type VARCHAR(20) DEFAULT 'vehicle';")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS kg NUMERIC(12,2);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS density NUMERIC(10,4);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS temperature NUMERIC(10,2);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS destination_name VARCHAR(150);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS destination_point_id INTEGER REFERENCES fuel_points(id) ON DELETE SET NULL;")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS document_date DATE;")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS source_kind VARCHAR(30);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS delivery_method VARCHAR(30);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS transport_reference VARCHAR(100);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS moto_hours NUMERIC(12,2);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS waybill_number VARCHAR(100);")
+    cur.execute("ALTER TABLE fuel_transactions ADD COLUMN IF NOT EXISTS driver_name VARCHAR(150);")
+
+    # performance indexes
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_companies_active ON companies (is_active, name);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_points_company_active ON fuel_points (company_id, is_active, point_type, name);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_vehicles_company_active ON vehicles (company_id, is_active, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_vehicles_plate_normalized ON vehicles (plate_normalized);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username_active ON users (username, is_active);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_users_company_active ON users (company_id, is_active);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_opening_balances_point_date ON fuel_opening_balances (fuel_point_id, balance_date DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_requests_status_date ON fuel_requests (status, request_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_requests_source_company_status ON fuel_requests (source_company_id, status, request_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_requests_receiver_company_date ON fuel_requests (receiver_company_id, request_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_requests_liability_company_date ON fuel_requests (liability_company_id, request_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_requests_requested_by_date ON fuel_requests (requested_by, request_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_requests_point_status ON fuel_requests (source_fuel_point_id, status, request_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_recon_openings_pair_date ON company_reconciliation_openings (lender_company_id, borrower_company_id, balance_date DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_recon_acts_pair_month ON company_reconciliation_acts (lender_company_id, borrower_company_id, period_month DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_transactions_point_date ON fuel_transactions (fuel_point_id, operation_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_transactions_status_date ON fuel_transactions (status, operation_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_transactions_vehicle_date ON fuel_transactions (vehicle_id, operation_date DESC, id DESC);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fuel_transactions_destination_point_date ON fuel_transactions (destination_point_id, operation_date DESC, id DESC);")
+
+    conn.commit()
+
+    cur.execute("SELECT id FROM companies WHERE name = %s", ("Eriell",))
+    if not cur.fetchone():
+        cur.execute("INSERT INTO companies (name, is_internal) VALUES (%s, TRUE)", ("Eriell",))
         conn.commit()
-    finally:
-        cur.close()
-        conn.close()
+    else:
+        cur.execute("UPDATE companies SET is_internal = TRUE WHERE name = %s", ("Eriell",))
+        conn.commit()
 
-    ensure_users_columns()
-    ensure_companies_columns()
-    ensure_objects_columns()
-    ensure_vehicles_columns()
-    ensure_fuel_stations_columns()
-    ensure_fuel_requests_columns()
-    ensure_fuel_transactions_columns()
+    cur.execute("SELECT id FROM users WHERE username = %s", ("admin",))
+    admin_row = cur.fetchone()
+    if not admin_row:
+        cur.execute(
+            """
+            INSERT INTO users (full_name, phone, username, password_hash, role, position, is_super_admin)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                "Главный администратор",
+                "",
+                "admin",
+                generate_password_hash("admin123"),
+                "admin",
+                "Администратор",
+                True,
+            ),
+        )
+        conn.commit()
+    else:
+        cur.execute("UPDATE users SET is_super_admin = TRUE WHERE username = %s", ("admin",))
+        conn.commit()
+
+    cur.close()
+    conn.close()
