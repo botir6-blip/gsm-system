@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Журнал топлива</h1>
+
+<div class="card compact-card">
+    <form method="get" class="form-grid cols-4 compact-form journal-filter-form">
+        <div>
+            <label>Период с</label>
+            <input type="date" name="date_from" value="{{ filters.date_from }}">
+        </div>
+        <div>
+            <label>Период по</label>
+            <input type="date" name="date_to" value="{{ filters.date_to }}">
+        </div>
+        <div>
+            <label>Пункт топлива</label>
+            <select name="point_id">
+                <option value="">Все пункты</option>
+                {% for point in filter_points %}
+                <option value="{{ point.id }}" {% if filters.point_id|string == point.id|string %}selected{% endif %}>{{ point.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Операция</label>
+            <select name="operation_type">
+                <option value="">Все операции</option>
+                {% for key, label in operation_labels.items() %}
+                <option value="{{ key }}" {% if filters.operation_type == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Статус</label>
+            <select name="status">
+                <option value="">Все статусы</option>
+                {% for key, label in status_labels.items() %}
+                <option value="{{ key }}" {% if filters.status == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Кому выдано</label>
+            <select name="receiver_type">
+                <option value="">Все</option>
+                <option value="vehicle" {% if filters.receiver_type == 'vehicle' %}selected{% endif %}>Транспорт</option>
+                <option value="other" {% if filters.receiver_type == 'other' %}selected{% endif %}>Объект / бригада / прочее</option>
+            </select>
+        </div>
+        <div class="full-row">
+            <label>Поиск</label>
+            <input type="text" name="q" value="{{ filters.q }}" placeholder="Пункт, госномер, марка, источник, документ, комментарий, водитель">
+        </div>
+        <div class="full-row journal-filter-actions">
+            <button type="submit" class="btn btn-primary">Применить фильтр</button>
+            <a href="{{ url_for('fuel_bp.fuel_journal') }}" class="btn btn-light">Сбросить</a>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="table-wrap">
+        <table class="journal-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Дата</th>
+                    <th>Пункт</th>
+                    <th>Операция</th>
+                    <th>Получатель</th>
+                    <th>Литры</th>
+                    <th>Кг</th>
+                    <th>На компанию</th>
+                    <th>Ввел</th>
+                    <th>Статус</th>
+                    <th class="action-col">Детали</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td>{{ row.id }}</td>
+                    <td>{{ row.operation_date }}</td>
+                    <td>{{ row.fuel_point_name or '' }}</td>
+                    <td>{{ operation_labels.get(row.operation_type, row.operation_type) }}</td>
+                    <td>
+                        {% if row.receiver_type == 'vehicle' %}
+                            {{ row.brand or '' }} {{ row.plate_number or '' }}
+                            {% if row.division_name %}<div class="muted small-text">{{ row.division_name }}</div>{% endif %}
+                        {% else %}
+                            {{ row.destination_name or '' }}
+                        {% endif %}
+                    </td>
+                    <td>{{ row.liters }}</td>
+                    <td>
+                        {{ row.kg or '' }}
+                        {% if row.point_type not in ['WAREHOUSE', 'TANK', 'STORAGE'] and row.kg %}
+                        <div class="muted small-text">расчётно</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ row.responsible_company_name or '' }}</td>
+                    <td>{{ row.entered_by_name or '' }}</td>
+                    <td>{{ status_labels.get(row.status, row.status) }}</td>
+                    <td class="action-cell">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="toggleDetails('details-{{ row.id }}')">Подробнее</button>
+                    </td>
+                </tr>
+
+                <tr id="details-{{ row.id }}" class="details-row" style="display:none;">
+                    <td colspan="11">
+                        <div class="details-box">
+                            <div class="details-grid">
+                                <div><strong>ID:</strong> {{ row.id }}</div>
+                                <div><strong>Дата:</strong> {{ row.operation_date }}</div>
+                                <div><strong>Пункт:</strong> {{ row.fuel_point_name or '' }}</div>
+                                <div><strong>Операция:</strong> {{ operation_labels.get(row.operation_type, row.operation_type) }}</div>
+                                <div><strong>Литры:</strong> {{ row.liters }}</div>
+                                <div><strong>Кг:</strong> {{ row.kg or '' }}</div>
+                                <div><strong>Уд. вес:</strong> {{ row.density or '' }}</div>
+                                <div><strong>Температура:</strong> {{ row.temperature or '' }}</div>
+                                <div><strong>Спидометр:</strong> {{ row.speedometer or '' }}</div>
+                                <div><strong>Моточасы:</strong> {{ row.moto_hours or '' }}</div>
+                                <div><strong>Путевой лист:</strong> {{ row.waybill_number or '' }}</div>
+                                <div><strong>Водитель:</strong> {{ row.driver_name or '' }}</div>
+                                <div><strong>Основание:</strong> {{ row.task_basis or '' }}</div>
+                                <div><strong>Работа:</strong> {{ row.work_purpose or '' }}</div>
+                                <div><strong>Компания:</strong> {{ row.responsible_company_name or '' }}</div>
+                                <div><strong>Источник:</strong> {{ row.source_info or '' }}</div>
+                                <div><strong>Тип источника:</strong> {{ source_kind_labels.get(row.source_kind, row.source_kind) if row.source_kind else '' }}</div>
+                                <div><strong>Способ доставки:</strong> {{ delivery_method_labels.get(row.delivery_method, row.delivery_method) if row.delivery_method else '' }}</div>
+                                <div><strong>Вагон / бензовоз:</strong> {{ row.transport_reference or '' }}</div>
+                                <div><strong>Документ:</strong> {{ row.document_number or '' }}</div>
+                                <div><strong>Комментарий:</strong> {{ row.comment or '' }}</div>
+                                <div><strong>Ввел:</strong> {{ row.entered_by_name or '' }}</div>
+                                <div><strong>Статус:</strong> {{ status_labels.get(row.status, row.status) }}</div>
+                                <div><strong>АТС:</strong> {{ row.ats_name or '' }}</div>
+                                <div><strong>Комментарий АТС:</strong> {{ row.ats_comment or '' }}</div>
+                                <div>
+                                    <strong>Получатель:</strong>
+                                    {% if row.receiver_type == 'vehicle' %}
+                                        {{ row.brand or '' }} {{ row.plate_number or '' }}{% if row.division_name %} / {{ row.division_name }}{% endif %}
+                                    {% else %}
+                                        {{ row.destination_name or '' }}
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="11" class="muted">По выбранному фильтру записей нет.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+
+{% if pagination %}
+<div class="card compact-card journal-pagination">
+    <div class="list-pagination">
+        <div class="muted">Страница {{ pagination.page }}</div>
+        <div class="action-inline">
+            {% if pagination.has_prev %}
+            <a class="btn btn-light btn-sm" href="{{ url_for('fuel_bp.fuel_journal', point_id=filters.point_id, operation_type=filters.operation_type, status=filters.status, receiver_type=filters.receiver_type, date_from=filters.date_from, date_to=filters.date_to, q=filters.q, page=pagination.page - 1) }}">← Назад</a>
+            {% endif %}
+            {% if pagination.has_next %}
+            <a class="btn btn-light btn-sm" href="{{ url_for('fuel_bp.fuel_journal', point_id=filters.point_id, operation_type=filters.operation_type, status=filters.status, receiver_type=filters.receiver_type, date_from=filters.date_from, date_to=filters.date_to, q=filters.q, page=pagination.page + 1) }}">Вперед →</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function toggleDetails(id) {
+    const row = document.getElementById(id);
+    row.style.display = (row.style.display === 'none' || row.style.display === '') ? 'table-row' : 'none';
+}
+</script>
+{% endblock %}

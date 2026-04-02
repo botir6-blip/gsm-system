@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Отчеты</h1>
+<p class="muted">Сводка по движению топлива, остаткам, транспорту и заявкам. Данные автоматически ограничены вашей компанией или закрепленным пунктом топлива.</p>
+<div class="action-inline" style="margin:0 0 14px 0;"><a href="/reports/reconciliation" class="btn btn-light">Перейти к актам сверки</a></div>
+
+<div class="card compact-card reports-filter-card">
+    <form method="get" class="form-grid cols-4 compact-form">
+        <div>
+            <label>С даты</label>
+            <input type="date" name="date_from" value="{{ filters.date_from }}">
+        </div>
+        <div>
+            <label>По дату</label>
+            <input type="date" name="date_to" value="{{ filters.date_to }}">
+        </div>
+        <div>
+            <label>Пункт топлива</label>
+            <select name="point_id">
+                <option value="">Все доступные</option>
+                {% for p in scoped_points %}
+                <option value="{{ p.id }}" {% if filters.point_id|string == p.id|string %}selected{% endif %}>{{ p.name }} · {{ point_type_labels.get(p.point_type, p.point_type) }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-actions-end report-filter-actions">
+            <button type="submit" class="btn btn-primary">Показать</button>
+        </div>
+    </form>
+</div>
+
+<div class="stats-grid compact-stats-grid report-stats-grid">
+    <div class="stat-card compact-stat-card success">
+        <div class="stat-title">Приход за период</div>
+        <div class="stat-value">{{ '%.2f'|format(summary.income_liters) }} л</div>
+        <div class="muted small-text">{{ '%.2f'|format(summary.income_kg) }} кг</div>
+    </div>
+    <div class="stat-card compact-stat-card danger-soft">
+        <div class="stat-title">Расход за период</div>
+        <div class="stat-value">{{ '%.2f'|format(summary.expense_liters) }} л</div>
+        <div class="muted small-text">{{ '%.2f'|format(summary.expense_kg) }} кг</div>
+    </div>
+    <div class="stat-card compact-stat-card warm">
+        <div class="stat-title">Операций за период</div>
+        <div class="stat-value">{{ summary.operation_count }}</div>
+    </div>
+    <div class="stat-card compact-stat-card">
+        <div class="stat-title">Текущий остаток</div>
+        <div class="stat-value">{{ '%.2f'|format(summary.current_balance_liters) }} л</div>
+        <div class="muted small-text">{{ '%.2f'|format(summary.current_balance_kg) }} кг · уд. вес {{ '%.4f'|format(summary.current_balance_density) }}</div>
+    </div>
+</div>
+
+<div class="card compact-card">
+    <div class="section-header">
+        <h2>Отчет по пунктам топлива</h2>
+        <div class="muted">Приход, расход и текущий остаток</div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Пункт</th>
+                    <th>Тип</th>
+                    <th>Приход, л</th>
+                    <th>Расход, л</th>
+                    <th>Остаток, л</th>
+                    <th>Остаток, кг</th>
+                    <th>Средний уд. вес</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in point_rows %}
+                <tr>
+                    <td>{{ row.name }}</td>
+                    <td>{{ row.point_type_label }}</td>
+                    <td>{{ '%.2f'|format(row.in_liters) }}</td>
+                    <td>{{ '%.2f'|format(row.out_liters) }}</td>
+                    <td>{{ '%.2f'|format(row.balance_liters) }}</td>
+                    <td>{{ '%.2f'|format(row.balance_kg) }}</td>
+                    <td>{{ '%.4f'|format(row.avg_density) }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="muted">Нет данных по выбранным фильтрам.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="reports-two-col">
+    <div class="card compact-card">
+        <div class="section-header">
+            <h2>Расход по транспорту</h2>
+            <div class="muted">Только операции на транспорт</div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Гос.№</th>
+                        <th>Марка</th>
+                        <th>Тип</th>
+                        <th>Операций</th>
+                        <th>Литры</th>
+                        <th>Кг</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in transport_rows %}
+                    <tr>
+                        <td>{{ row.plate_number or '—' }}</td>
+                        <td>{{ row.brand or '—' }}</td>
+                        <td>{{ row.vehicle_type or '—' }}</td>
+                        <td>{{ row.operation_count }}</td>
+                        <td>{{ '%.2f'|format(row.liters or 0) }}</td>
+                        <td>{{ '%.2f'|format(row.kg or 0) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="muted">Нет данных.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card compact-card">
+        <div class="section-header">
+            <h2>Сводка по заявкам</h2>
+            <div class="muted">По статусам за выбранный период</div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Статус</th>
+                        <th>Кол-во</th>
+                        <th>Заявлено, л</th>
+                        <th>Факт, л</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in request_rows %}
+                    <tr>
+                        <td>{{ row.status_label }}</td>
+                        <td>{{ row.request_count }}</td>
+                        <td>{{ '%.2f'|format(row.requested_liters or 0) }}</td>
+                        <td>{{ '%.2f'|format(row.actual_liters or 0) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="muted">Нет данных.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+.report-filter-actions { align-self: end; }
+.report-stats-grid { margin-bottom: 16px; }
+.reports-two-col { display:grid; grid-template-columns: 1.35fr 1fr; gap:16px; }
+.danger-soft .stat-title, .danger-soft .stat-value { color:#9f2f2f; }
+@media (max-width: 1100px) { .reports-two-col { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}

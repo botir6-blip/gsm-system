@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Акты сверки по топливу</h1>
+<p class="muted">Здесь фиксируется, на какую компанию отнесено отпущенное топливо, что выдано в долг, а также месячные акты сверки между компаниями.</p>
+
+<div class="card compact-card">
+    <form method="get" class="form-grid cols-4 compact-form">
+        <div>
+            <label>Компания-кредитор</label>
+            <select name="lender_company_id">
+                <option value="">-- выберите --</option>
+                {% for c in companies %}
+                <option value="{{ c.id }}" {% if filters.lender_company_id|string == c.id|string %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Компания-должник</label>
+            <select name="borrower_company_id">
+                <option value="">-- выберите --</option>
+                {% for c in companies %}
+                <option value="{{ c.id }}" {% if filters.borrower_company_id|string == c.id|string %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Месяц акта</label>
+            <input type="month" name="period_month" value="{{ filters.period_month }}">
+        </div>
+        <div class="form-actions-end">
+            <button type="submit" class="btn btn-primary">Показать</button>
+        </div>
+    </form>
+</div>
+
+{% if summary %}
+<div class="stats-grid compact-stats-grid report-stats-grid">
+    <div class="stat-card compact-stat-card warm">
+        <div class="stat-title">Входящий остаток</div>
+        <div class="stat-value">{{ '%.2f'|format(summary.opening_liters or 0) }} л</div>
+        <div class="muted small-text">{{ '%.2f'|format(summary.opening_kg or 0) }} кг{% if summary.opening_date %} · на {{ summary.opening_date }}{% endif %}</div>
+    </div>
+    <div class="stat-card compact-stat-card success">
+        <div class="stat-title">Выдано в долг за месяц</div>
+        <div class="stat-value">{{ '%.2f'|format(summary.issued_liters or 0) }} л</div>
+        <div class="muted small-text">{{ '%.2f'|format(summary.issued_kg or 0) }} кг</div>
+    </div>
+    <div class="stat-card compact-stat-card danger-soft">
+        <div class="stat-title">Погашение встречным отпуском</div>
+        <div class="stat-value">{{ '%.2f'|format(summary.returned_liters or 0) }} л</div>
+        <div class="muted small-text">{{ '%.2f'|format(summary.returned_kg or 0) }} кг</div>
+    </div>
+    <div class="stat-card compact-stat-card">
+        <div class="stat-title">Исходящий остаток</div>
+        <div class="stat-value">{{ '%.2f'|format(summary.closing_liters or 0) }} л</div>
+        <div class="muted small-text">{{ '%.2f'|format(summary.closing_kg or 0) }} кг</div>
+    </div>
+</div>
+
+<div class="reports-two-col recon-two-col">
+    <div class="card compact-card">
+        <div class="section-header">
+            <h2>Сохранить акт сверки</h2>
+            <div class="muted">{{ lender_company.name if lender_company else '' }} → {{ borrower_company.name if borrower_company else '' }}</div>
+        </div>
+        <form method="post" action="{{ url_for('reports_bp.reconciliation_save_act') }}" class="form-grid cols-2 compact-form">
+            <input type="hidden" name="lender_company_id" value="{{ filters.lender_company_id }}">
+            <input type="hidden" name="borrower_company_id" value="{{ filters.borrower_company_id }}">
+            <input type="hidden" name="period_month" value="{{ filters.period_month }}">
+            <div>
+                <label>Номер акта</label>
+                <input type="text" name="act_number" value="{{ saved_act.act_number if saved_act else '' }}">
+            </div>
+            <div>
+                <label>Дата акта</label>
+                <input type="date" name="act_date" value="{{ saved_act.act_date if saved_act else '' }}">
+            </div>
+            <div class="full-row">
+                <label>Комментарий</label>
+                <textarea name="note" rows="3" placeholder="Например: сверено с Saneg за апрель 2026">{{ saved_act.note if saved_act else '' }}</textarea>
+            </div>
+            <div class="full-row action-inline">
+                <button type="submit" class="btn btn-primary">Сохранить акт</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card compact-card">
+        <div class="section-header">
+            <h2>Начальный остаток</h2>
+            <div class="muted">Например, на 01.04.2026</div>
+        </div>
+        <form method="post" action="{{ url_for('reports_bp.reconciliation_save_opening') }}" class="form-grid cols-2 compact-form">
+            <input type="hidden" name="lender_company_id" value="{{ filters.lender_company_id }}">
+            <input type="hidden" name="borrower_company_id" value="{{ filters.borrower_company_id }}">
+            <input type="hidden" name="period_month" value="{{ filters.period_month }}">
+            <div>
+                <label>Дата остатка</label>
+                <input type="date" name="balance_date" value="{{ default_opening_date }}">
+            </div>
+            <div>
+                <label>Литры</label>
+                <input type="number" step="0.01" name="liters">
+            </div>
+            <div>
+                <label>Кг</label>
+                <input type="number" step="0.01" name="kg">
+            </div>
+            <div class="full-row">
+                <label>Комментарий</label>
+                <textarea name="comment" rows="3" placeholder="Например: входящий остаток на 01.04.2026"></textarea>
+            </div>
+            <div class="full-row action-inline">
+                <button type="submit" class="btn btn-primary">Сохранить остаток</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card compact-card">
+    <div class="section-header">
+        <h2>Движение, попадающее в акт</h2>
+        <div class="muted">Только проверенные и утвержденные расходы между выбранными компаниями</div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Дата</th>
+                    <th>Направление</th>
+                    <th>Пункт</th>
+                    <th>Документ</th>
+                    <th>Литры</th>
+                    <th>Кг</th>
+                    <th>Заявка</th>
+                    <th>Комментарий</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in detail_rows %}
+                <tr>
+                    <td>{{ row.operation_date }}</td>
+                    <td>{{ row.direction_label }}</td>
+                    <td>{{ row.fuel_point_name or '—' }}</td>
+                    <td>{{ row.document_number or '—' }}</td>
+                    <td>{{ row.liters or 0 }}</td>
+                    <td>{{ row.kg_effective or 0 }}</td>
+                    <td>{% if row.request_id %}#{{ row.request_id }}{% else %}—{% endif %}</td>
+                    <td>{{ row.comment or '—' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" class="muted">За выбранный месяц движений для акта сверки нет.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="reports-two-col recon-two-col">
+    <div class="card compact-card">
+        <div class="section-header">
+            <h2>Введенные остатки по этой паре</h2>
+            <div class="muted">История ручных входящих остатков</div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Дата</th>
+                        <th>Литры</th>
+                        <th>Кг</th>
+                        <th>Комментарий</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in opening_rows %}
+                    <tr>
+                        <td>{{ row.balance_date }}</td>
+                        <td>{{ row.liters }}</td>
+                        <td>{{ row.kg }}</td>
+                        <td>{{ row.comment or '—' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="muted">Остатки для этой пары еще не заведены.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card compact-card">
+        <div class="section-header">
+            <h2>Последние сохраненные акты</h2>
+            <div class="muted">Последние 50 записей</div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Месяц</th>
+                        <th>Пара компаний</th>
+                        <th>Номер</th>
+                        <th>Исходящий остаток, л</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in recent_acts %}
+                    <tr>
+                        <td>{{ row.period_month }}</td>
+                        <td>{{ row.lender_company_name }} → {{ row.borrower_company_name }}</td>
+                        <td>{{ row.act_number or '—' }}</td>
+                        <td>{{ row.closing_liters or 0 }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="muted">Сохраненных актов пока нет.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="card compact-card">
+    <div class="muted">Выберите компанию-кредитора, компанию-должника и месяц, чтобы сформировать акт сверки.</div>
+</div>
+{% endif %}
+
+<style>
+.recon-two-col { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+@media (max-width: 1100px) { .recon-two-col { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}

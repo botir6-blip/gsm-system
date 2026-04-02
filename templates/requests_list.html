@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ page_title }}</h1>
+<p class="muted">{{ page_note }}</p>
+
+<div class="request-cards">
+    {% for row in rows %}
+    <div class="card request-card">
+        <div class="section-header">
+            <div>
+                <div class="hero-eyebrow">Заявка #{{ row.id }}</div>
+                <div class="request-type-title">{{ request_type_labels.get(row.request_type, row.request_type) }}</div>
+            </div>
+            <div class="request-status-pill status-{{ row.status }}">{{ request_status_labels.get(row.status, row.status) }}</div>
+        </div>
+
+        <div class="details-grid request-grid">
+            <div><strong>Дата:</strong> {{ row.request_date }}</div>
+            <div><strong>Нужно к:</strong> {{ row.needed_at or '—' }}</div>
+            <div><strong>Компания-источник:</strong> {{ row.source_company_name or '—' }}</div>
+            <div><strong>Назначенный пункт топлива:</strong> {{ row.source_fuel_point_name or 'еще не назначен' }}</div>
+            <div><strong>Компания-получатель:</strong> {{ row.receiver_company_name or '—' }}</div>
+            <div><strong>Создал:</strong> {{ row.requested_by_name or '—' }}</div>
+            <div><strong>Наш транспорт:</strong> {% if row.vehicle_id %}{{ row.plate_number or '—' }}{% if row.brand %} · {{ row.brand }}{% endif %}{% else %}—{% endif %}</div>
+            <div><strong>Внешний транспорт:</strong> {{ row.external_plate_number or '—' }}</div>
+            <div><strong>Запрос:</strong> {{ row.requested_liters or 0 }} л{% if row.requested_kg and row.requested_kg != 0 %} / {{ row.requested_kg }} кг{% endif %}</div>
+            <div><strong>Согласовано:</strong> {{ row.approved_liters or 0 }} л{% if row.approved_kg and row.approved_kg != 0 %} / {{ row.approved_kg }} кг{% endif %}</div>
+            <div><strong>Факт:</strong> {{ row.actual_liters or 0 }} л{% if row.actual_kg and row.actual_kg != 0 %} / {{ row.actual_kg }} кг{% endif %}</div>
+            <div><strong>Документ:</strong> {{ row.document_number or '—' }}</div>
+            <div><strong>На какую компанию относится топливо:</strong> {{ row.liability_company_name or 'еще не указано' }}</div>
+            <div><strong>Исполнение в долг:</strong> {% if row.liability_company_id and row.source_company_id and row.liability_company_id != row.source_company_id %}Да, компании {{ row.liability_company_name or '—' }}{% else %}Нет{% endif %}</div>
+            <div class="full-row"><strong>Основание:</strong> {{ row.document_basis or '—' }}</div>
+            <div class="full-row"><strong>Назначение:</strong> {{ row.purpose or '—' }}</div>
+            <div class="full-row"><strong>Комментарий заявки:</strong> {{ row.comment or '—' }}</div>
+            {% if row.approval_note %}
+            <div class="full-row"><strong>Комментарий согласования:</strong> {{ row.approval_note }}</div>
+            {% endif %}
+        </div>
+
+        {% if list_mode == 'approval' and row.status == 'pending_approval' %}
+        <form method="post" action="{{ url_for('requests_bp.request_approve', request_id=row.id) }}" class="approval-form">
+            <div class="form-grid cols-3">
+                <div>
+                    <label>Пункт топлива / объект отпуска</label>
+                    <select name="source_fuel_point_id" required>
+                        <option value="">-- выберите --</option>
+                        {% for p in fuel_points %}
+                            {% if p.company_id == row.source_company_id %}
+                            <option value="{{ p.id }}" {% if row.source_fuel_point_id == p.id %}selected{% endif %}>
+                                {{ p.name }}{% if p.company_name %} · {{ p.company_name }}{% endif %}
+                            </option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Согласовано, л</label>
+                    <input type="number" step="0.01" name="approved_liters" value="{{ row.requested_liters or 0 }}">
+                </div>
+                <div>
+                    <label>Согласовано, кг</label>
+                    <input type="number" step="0.01" name="approved_kg" value="{{ row.requested_kg or 0 }}">
+                </div>
+                <div class="full-row">
+                    <label>Компания, на которую относится топливо</label>
+                    <select name="liability_company_id" required>
+                        <option value="">-- выберите --</option>
+                        {% for company in companies %}
+                        <option value="{{ company.id }}" {% if row.liability_company_id == company.id or (not row.liability_company_id and row.receiver_company_id == company.id) %}selected{% endif %}>{{ company.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="muted small-text">Если эта компания не совпадает с компанией-источником, отпуск попадет в акт сверки как выдача в долг.</div>
+                </div>
+                <div class="full-row">
+                    <label>Комментарий согласования</label>
+                    <input type="text" name="approve_note" value="{{ row.approval_note or '' }}" placeholder="Например: отпустить с ПАЗС-2, отнести на Saneg как долг">
+                </div>
+            </div>
+            <div class="action-inline request-actions">
+                <button type="submit" class="btn btn-primary">Согласовать</button>
+            </div>
+        </form>
+        <form method="post" action="{{ url_for('requests_bp.request_reject', request_id=row.id) }}" class="reject-form compact-form">
+            <label>Причина отклонения</label>
+            <input type="text" name="reject_note">
+            <div class="action-inline request-actions">
+                <button type="submit" class="btn btn-delete">Отклонить</button>
+            </div>
+        </form>
+        {% endif %}
+
+        {% if list_mode == 'fueling' and row.status == 'approved' %}
+        <form method="post" action="{{ url_for('requests_bp.request_fuel', request_id=row.id) }}" class="approval-form">
+            <div class="form-grid cols-4">
+                <div>
+                    <label>Пункт топлива</label>
+                    <div class="readonly-cell">{{ row.source_fuel_point_name or 'не назначен' }}</div>
+                </div>
+                <div>
+                    <label>Факт, л</label>
+                    <input type="number" step="0.01" name="actual_liters" value="{{ row.approved_liters or row.requested_liters or 0 }}">
+                </div>
+                <div>
+                    <label>Факт, кг</label>
+                    <input type="number" step="0.01" name="actual_kg" value="{{ row.approved_kg or row.requested_kg or 0 }}">
+                </div>
+                <div>
+                    <label>Уд. вес</label>
+                    <input type="number" step="0.0001" name="density" value="{{ default_density if default_density is defined else 0.84 }}">
+                </div>
+                <div>
+                    <label>Температура</label>
+                    <input type="number" step="0.01" name="temperature">
+                </div>
+                <div>
+                    <label>Отнести на компанию</label>
+                    <div class="readonly-cell">{{ row.liability_company_name or row.receiver_company_name or 'не указано' }}</div>
+                </div>
+                <div class="full-row">
+                    <label>Комментарий оператора</label>
+                    <input type="text" name="fuel_note">
+                </div>
+            </div>
+            <div class="action-inline request-actions">
+                <button type="submit" class="btn btn-primary">Заправка выполнена</button>
+            </div>
+        </form>
+        {% endif %}
+
+        {% if list_mode == 'check' and row.status == 'fueling_done' %}
+        <form method="post" action="{{ url_for('requests_bp.request_check', request_id=row.id) }}" class="reject-form compact-form">
+            <label>Комментарий проверяющего</label>
+            <input type="text" name="check_note">
+            <div class="action-inline request-actions">
+                <button type="submit" class="btn btn-primary">Проверить и закрыть</button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card">
+        <div class="muted">Записей пока нет.</div>
+    </div>
+    {% endfor %}
+</div>
+
+<style>
+.request-cards { display:grid; gap:14px; }
+.request-type-title { font-size:18px; font-weight:800; }
+.request-grid { margin-bottom: 12px; }
+.request-status-pill {
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:6px 10px; border-radius:999px; font-size:12px; font-weight:700;
+    background:#eef2f7; color:#334155;
+}
+.status-pending_approval { background:#fff5df; color:#9a5a00; }
+.status-approved { background:#e9f8ef; color:#0f7b43; }
+.status-fueling_done { background:#e8f0ff; color:#1d4ed8; }
+.status-checked { background:#edf7ee; color:#166534; }
+.status-rejected { background:#fee2e2; color:#b91c1c; }
+.approval-form, .reject-form { margin-top:12px; }
+.request-actions { margin-top: 10px; }
+.readonly-cell {
+    min-height: 42px;
+    display:flex;
+    align-items:center;
+    padding: 10px 12px;
+    border: 1px solid #dbe5f1;
+    border-radius: 10px;
+    background: #f8fbff;
+    font-weight: 600;
+}
+</style>
+
+{% if pagination %}
+<div class="card compact-card requests-pagination">
+    <div class="list-pagination">
+        <div class="muted">Страница {{ pagination.page }}</div>
+        <div class="action-inline">
+            {% if pagination.has_prev %}
+            <a class="btn btn-light btn-sm" href="{{ pagination_url(pagination.page - 1) }}">← Назад</a>
+            {% endif %}
+            {% if pagination.has_next %}
+            <a class="btn btn-light btn-sm" href="{{ pagination_url(pagination.page + 1) }}">Вперед →</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

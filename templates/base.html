@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Система ГСМ ERIELL</title>
+    <link rel="icon" href="{{ url_for('static', filename='eriell_logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        :root {
+            --brand-navy: #102d66;
+            --brand-navy-2: #183c82;
+            --brand-gold: #f2c94c;
+            --sidebar-text: #f4f7fd;
+            --sidebar-muted: rgba(244, 247, 253, 0.72);
+            --surface: #f3f6fb;
+            --surface-2: #eaf0f8;
+            --card-bg: rgba(255, 255, 255, 0.92);
+            --card-border: #d9e4f1;
+            --text-main: #10233f;
+            --text-muted: #6e7d91;
+            --shadow-soft: 0 12px 34px rgba(12, 34, 73, 0.07);
+            --shadow-strong: 0 18px 38px rgba(10, 29, 63, 0.14);
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            min-height: 100%;
+            font-family: Arial, Helvetica, sans-serif;
+            color: var(--text-main);
+            background:
+                radial-gradient(circle at top left, rgba(24, 60, 130, 0.08) 0, rgba(24, 60, 130, 0) 28%),
+                linear-gradient(180deg, #f8fbff 0%, var(--surface) 100%);
+        }
+
+        a { color: inherit; }
+
+        .app-shell {
+            display: grid;
+            grid-template-columns: 226px minmax(0, 1fr);
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            background: linear-gradient(180deg, #153470 0%, #102957 58%, #0e2348 100%);
+            color: var(--sidebar-text);
+            border-right: 1px solid rgba(255,255,255,0.06);
+            padding: 12px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: inset -1px 0 0 rgba(255,255,255,0.03);
+        }
+
+        .sidebar-brand {
+            display: grid;
+            grid-template-columns: 74px 1fr;
+            gap: 10px;
+            align-items: center;
+            padding: 10px;
+            border-radius: 16px;
+            text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+        }
+
+        .sidebar-brand img {
+            width: 74px;
+            display: block;
+            background: #fff;
+            border-radius: 11px;
+            padding: 6px 7px;
+            border: 1px solid rgba(16,35,63,0.08);
+        }
+
+        .brand-title {
+            font-size: 14px;
+            line-height: 1.12;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+        }
+
+        .brand-subtitle {
+            margin-top: 5px;
+            color: var(--sidebar-muted);
+            font-size: 11px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        .brand-company {
+            margin-top: 3px;
+            font-size: 11px;
+            color: rgba(255,255,255,0.56);
+        }
+
+        .sidebar-nav-grouped {
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+        }
+
+        .nav-group {
+            padding: 7px 6px;
+            border-radius: 15px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .nav-group-title {
+            padding: 0 8px 7px;
+            color: var(--sidebar-muted);
+            text-transform: uppercase;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.16em;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-height: 36px;
+            padding: 8px 9px;
+            border-radius: 11px;
+            text-decoration: none;
+            color: var(--sidebar-text);
+            font-size: 13px;
+            font-weight: 700;
+            transition: background .18s ease, transform .18s ease, box-shadow .18s ease;
+        }
+
+        .nav-link:hover {
+            background: rgba(255,255,255,0.09);
+            transform: translateX(2px);
+        }
+
+        .nav-link.active {
+            background: linear-gradient(90deg, rgba(242, 201, 76, 0.18) 0%, rgba(255,255,255,0.10) 100%);
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07);
+        }
+
+        .nav-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.30);
+            flex: 0 0 8px;
+        }
+
+        .nav-link.active .nav-dot {
+            background: var(--brand-gold);
+            box-shadow: 0 0 0 4px rgba(242, 201, 76, 0.16);
+        }
+
+        .sidebar-footer {
+            margin-top: auto;
+            display: grid;
+            gap: 10px;
+            padding-top: 2px;
+        }
+
+        .sidebar-user {
+            padding: 10px 11px;
+            border-radius: 14px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.06);
+            font-size: 12px;
+        }
+
+        .sidebar-user-name {
+            font-weight: 800;
+            color: #fff;
+            line-height: 1.25;
+        }
+
+        .sidebar-user-role {
+            margin-top: 4px;
+            color: var(--sidebar-muted);
+        }
+
+        .logout-btn {
+            min-height: 38px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 800;
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.08);
+            transition: background .18s ease;
+        }
+
+        .logout-btn:hover { background: rgba(255,255,255,0.14); }
+
+        .main-area {
+            min-width: 0;
+            padding: 12px 14px 16px;
+        }
+
+        .topbar-mobile {
+            display: none;
+            margin-bottom: 10px;
+        }
+
+        .mobile-menu-btn {
+            min-height: 38px;
+            padding: 0 13px;
+            border-radius: 11px;
+            border: 1px solid var(--card-border);
+            background: rgba(255,255,255,0.95);
+            box-shadow: var(--shadow-soft);
+            color: var(--text-main);
+            font-weight: 800;
+        }
+
+        .app-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 18px;
+            border: 1px solid var(--card-border);
+            background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(250,252,255,0.94) 100%);
+            box-shadow: var(--shadow-soft);
+            margin-bottom: 12px;
+            backdrop-filter: blur(12px);
+        }
+
+        .topbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            min-width: 0;
+        }
+
+        .topbar-logo {
+            width: 88px;
+            padding: 5px 7px;
+            border-radius: 10px;
+            background: #fff;
+            border: 1px solid var(--card-border);
+            box-shadow: inset 0 -1px 0 rgba(16, 35, 63, 0.03);
+        }
+
+        .topbar-kicker {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            color: #5e78a3;
+            font-weight: 800;
+            margin-bottom: 3px;
+        }
+
+        .topbar-title {
+            font-size: 14px;
+            font-weight: 800;
+            line-height: 1.2;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .topbar-subtitle {
+            margin-top: 3px;
+            font-size: 12px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .topbar-user {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+
+        .company-chip,
+        .user-chip {
+            border-radius: 999px;
+            padding: 7px 12px;
+            border: 1px solid var(--card-border);
+            background: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .company-chip {
+            color: #315488;
+            background: linear-gradient(180deg, #fffdf5 0%, #fff9e7 100%);
+            border-color: #f1e1a5;
+        }
+
+        .page-content { min-width: 0; }
+
+        .flash-wrap {
+            display: grid;
+            gap: 9px;
+            margin-bottom: 12px;
+        }
+
+        .flash {
+            padding: 11px 13px;
+            border-radius: 14px;
+            border: 1px solid transparent;
+            box-shadow: var(--shadow-soft);
+            font-size: 13px;
+        }
+
+        .flash-success { background: #eaf8ef; border-color: #bde2ca; color: #175c30; }
+        .flash-danger { background: #fdecec; border-color: #f2bcbc; color: #8d1f1f; }
+        .flash-warning { background: #fff8e7; border-color: #efdb9a; color: #7a5900; }
+        .flash-info { background: #edf5ff; border-color: #c1d8f6; color: #174989; }
+
+        .sidebar-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(7, 16, 35, 0.34);
+            z-index: 1800;
+            display: none;
+        }
+
+        .auth-shell {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 16px;
+        }
+
+        @media (max-width: 1160px) {
+            .app-shell { grid-template-columns: 1fr; }
+
+            .sidebar {
+                position: fixed;
+                inset: 0 auto 0 0;
+                width: 274px;
+                z-index: 2200;
+                transform: translateX(-100%);
+                transition: transform .22s ease;
+                box-shadow: var(--shadow-strong);
+            }
+
+            .sidebar.open { transform: translateX(0); }
+            .sidebar-backdrop.show { display: block; }
+            .topbar-mobile { display: block; }
+        }
+
+        @media (max-width: 820px) {
+            .main-area { padding: 10px; }
+            .app-topbar {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 10px 12px;
+            }
+            .topbar-user { width: 100%; flex-wrap: wrap; }
+            .topbar-logo { width: 76px; }
+        }
+    </style>
+</head>
+<body>
+    {% if current_user %}
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
+
+    <div class="app-shell">
+        <aside class="sidebar" id="sidebar">
+            <a href="/dashboard" class="sidebar-brand">
+                <img src="{{ url_for('static', filename='eriell_logo.svg') }}" alt="ERIELL">
+                <div>
+                    <div class="brand-title">Система ГСМ</div>
+                    <div class="brand-subtitle">ERIELL</div>
+                    <div class="brand-company">Корпоративный интерфейс</div>
+                </div>
+            </a>
+
+            <nav class="sidebar-nav-grouped">
+                <div class="nav-group">
+                    <div class="nav-group-title">Основное</div>
+                    <a href="/dashboard" class="nav-link"><span class="nav-dot"></span><span>Главная</span></a>
+                    <a href="/fuel/journal" class="nav-link"><span class="nav-dot"></span><span>Журнал топлива</span></a>
+                    <a href="/reports" class="nav-link"><span class="nav-dot"></span><span>Отчеты</span></a>
+                    <a href="/reports/reconciliation" class="nav-link"><span class="nav-dot"></span><span>Акты сверки</span></a>
+                </div>
+
+                {% if current_user.can_request_create or current_user.can_request_approve or current_user.can_request_check or current_user.role == 'admin' %}
+                <div class="nav-group">
+                    <div class="nav-group-title">Заявки</div>
+                    <a href="/requests" class="nav-link"><span class="nav-dot"></span><span>Реестр заявок</span></a>
+                    {% if current_user.can_request_create or current_user.role == 'admin' %}
+                    <a href="/requests/new" class="nav-link"><span class="nav-dot"></span><span>Новая заявка</span></a>
+                    <a href="/requests/my" class="nav-link"><span class="nav-dot"></span><span>Мои заявки</span></a>
+                    {% endif %}
+                    {% if current_user.can_request_approve or current_user.role == 'admin' %}
+                    <a href="/requests/approval" class="nav-link"><span class="nav-dot"></span><span>Согласование</span></a>
+                    {% endif %}
+                    {% if current_user.can_request_check or current_user.role == 'admin' %}
+                    <a href="/requests/check" class="nav-link"><span class="nav-dot"></span><span>Проверка заявок</span></a>
+                    {% endif %}
+                    {% if current_user.role in ['fuel_operator', 'admin'] %}
+                    <a href="/requests/fueling" class="nav-link"><span class="nav-dot"></span><span>Исполнение</span></a>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if current_user.role in ['fuel_operator', 'admin'] %}
+                <div class="nav-group">
+                    <div class="nav-group-title">Операции</div>
+                    <a href="/fuel/income" class="nav-link"><span class="nav-dot"></span><span>Приход топлива</span></a>
+                    <a href="/fuel/expense" class="nav-link"><span class="nav-dot"></span><span>Расход топлива</span></a>
+                    {% if current_user.role == 'admin' %}
+                    <a href="/fuel/opening-balances" class="nav-link"><span class="nav-dot"></span><span>Начальные остатки</span></a>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if current_user.role in ['ats', 'admin'] %}
+                <div class="nav-group">
+                    <div class="nav-group-title">Контроль</div>
+                    <a href="/ats/pending" class="nav-link"><span class="nav-dot"></span><span>Проверка АТС</span></a>
+                </div>
+                {% endif %}
+
+                {% if current_user.can_manage_vehicles %}
+                <div class="nav-group">
+                    <div class="nav-group-title">Транспорт</div>
+                    <a href="/vehicles" class="nav-link"><span class="nav-dot"></span><span>Транспорт</span></a>
+                </div>
+                {% endif %}
+
+                {% if current_user.role == 'admin' %}
+                <div class="nav-group">
+                    <div class="nav-group-title">Справочники</div>
+                    <a href="/companies" class="nav-link"><span class="nav-dot"></span><span>Компании</span></a>
+                    <a href="/fuel-points" class="nav-link"><span class="nav-dot"></span><span>Пункты топлива</span></a>
+                    <a href="/users" class="nav-link"><span class="nav-dot"></span><span>Сотрудники</span></a>
+                </div>
+                {% endif %}
+
+                {% if current_user.username == 'admin' or current_user.is_super_admin %}
+                <div class="nav-group">
+                    <div class="nav-group-title">Администрирование</div>
+                    <a href="/audit/logins" class="nav-link"><span class="nav-dot"></span><span>Журнал входов</span></a>
+                </div>
+                {% endif %}
+
+                <div class="nav-group">
+                    <div class="nav-group-title">Аккаунт</div>
+                    <a href="/profile" class="nav-link"><span class="nav-dot"></span><span>Личный кабинет</span></a>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="sidebar-user">
+                    <div class="sidebar-user-name">{{ current_user.full_name or current_user.username }}</div>
+                    <div class="sidebar-user-role">{{ current_user.company_name or 'ERIELL' }}</div>
+                </div>
+                <a href="/logout" class="logout-btn">Выйти</a>
+            </div>
+        </aside>
+
+        <main class="main-area">
+            <div class="topbar-mobile">
+                <button type="button" class="mobile-menu-btn" onclick="toggleSidebar(true)">☰ Меню</button>
+            </div>
+
+            <header class="app-topbar">
+                <div class="topbar-brand">
+                    <img src="{{ url_for('static', filename='eriell_logo.svg') }}" alt="ERIELL" class="topbar-logo">
+                    <div>
+                        <div class="topbar-kicker">ERIELL · корпоративная система</div>
+                        <div class="topbar-title">Учет движения топлива и заявок</div>
+                        <div class="topbar-subtitle">Компактный рабочий интерфейс для ежедневной работы</div>
+                    </div>
+                </div>
+                <div class="topbar-user">
+                    {% if current_user.company_name %}
+                    <div class="company-chip">{{ current_user.company_name }}</div>
+                    {% endif %}
+                    <div class="user-chip">{{ current_user.full_name or current_user.username }}</div>
+                </div>
+            </header>
+    {% else %}
+    <main class="auth-shell">
+        <div class="page-content" style="width:100%;max-width:1100px;">
+    {% endif %}
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                <div class="flash-wrap">
+                    {% for category, message in messages %}
+                    <div class="flash flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            {% endwith %}
+
+            <div class="page-content">{% block content %}{% endblock %}</div>
+
+    {% if current_user %}
+        </main>
+    </div>
+    {% else %}
+        </div>
+    </main>
+    {% endif %}
+    <script>
+        function toggleSidebar(open) {
+            const sidebar = document.getElementById('sidebar');
+            const backdrop = document.getElementById('sidebarBackdrop');
+            if (!sidebar || !backdrop) return;
+            if (open) {
+                sidebar.classList.add('open');
+                backdrop.classList.add('show');
+            } else {
+                sidebar.classList.remove('open');
+                backdrop.classList.remove('show');
+            }
+        }
+
+        (function () {
+            const path = window.location.pathname.replace(/\/+$/, '') || '/';
+            const links = document.querySelectorAll('.sidebar-nav-grouped .nav-link');
+            links.forEach(link => {
+                const href = (link.getAttribute('href') || '').replace(/\/+$/, '') || '/';
+                if ((href !== '/' && path.startsWith(href)) || href === path) {
+                    link.classList.add('active');
+                }
+                link.addEventListener('click', function () {
+                    if (window.innerWidth <= 1160) {
+                        toggleSidebar(false);
+                    }
+                });
+            });
+        })();
+    </script>
+</body>
+</html>
