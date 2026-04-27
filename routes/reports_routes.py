@@ -193,16 +193,44 @@ def _reconciliation_movements(lender_company_id, borrower_company_id, period_sta
     row = fetch_one(
         """
         SELECT
-            COALESCE(SUM(CASE WHEN fp.company_id = %s AND ft.responsible_company_id = %s THEN ft.liters ELSE 0 END), 0) AS issued_liters,
-            COALESCE(SUM(CASE WHEN fp.company_id = %s AND ft.responsible_company_id = %s THEN COALESCE(NULLIF(ft.kg, 0), ft.liters * COALESCE(ft.density, %s)) ELSE 0 END), 0) AS issued_kg,
-            COALESCE(SUM(CASE WHEN fp.company_id = %s AND ft.responsible_company_id = %s THEN ft.liters ELSE 0 END), 0) AS returned_liters,
-            COALESCE(SUM(CASE WHEN fp.company_id = %s AND ft.responsible_company_id = %s THEN COALESCE(NULLIF(ft.kg, 0), ft.liters * COALESCE(ft.density, %s)) ELSE 0 END), 0) AS returned_kg
+            COALESCE(SUM(
+                CASE
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('EXPENSE', 'TRANSFER_OUT') THEN ft.liters
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('INCOME', 'TRANSFER_IN', 'CORRECTION') THEN ft.liters
+                    ELSE 0
+                END
+            ), 0) AS issued_liters,
+            COALESCE(SUM(
+                CASE
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('EXPENSE', 'TRANSFER_OUT')
+                        THEN COALESCE(NULLIF(ft.kg, 0), ft.liters * COALESCE(ft.density, %s))
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('INCOME', 'TRANSFER_IN', 'CORRECTION')
+                        THEN COALESCE(NULLIF(ft.kg, 0), ft.liters * COALESCE(ft.density, %s))
+                    ELSE 0
+                END
+            ), 0) AS issued_kg,
+            COALESCE(SUM(
+                CASE
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('INCOME', 'TRANSFER_IN', 'CORRECTION') THEN ft.liters
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('EXPENSE', 'TRANSFER_OUT') THEN ft.liters
+                    ELSE 0
+                END
+            ), 0) AS returned_liters,
+            COALESCE(SUM(
+                CASE
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('INCOME', 'TRANSFER_IN', 'CORRECTION')
+                        THEN COALESCE(NULLIF(ft.kg, 0), ft.liters * COALESCE(ft.density, %s))
+                    WHEN fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('EXPENSE', 'TRANSFER_OUT')
+                        THEN COALESCE(NULLIF(ft.kg, 0), ft.liters * COALESCE(ft.density, %s))
+                    ELSE 0
+                END
+            ), 0) AS returned_kg
         FROM fuel_transactions ft
         LEFT JOIN fuel_points fp ON fp.id = ft.fuel_point_id
-        WHERE ft.operation_type = 'EXPENSE'
-          AND ft.status = 'approved'
+        WHERE ft.status = 'approved'
           AND ft.operation_date >= %s
           AND ft.operation_date < %s
+          AND ft.operation_type IN ('INCOME', 'TRANSFER_IN', 'CORRECTION', 'EXPENSE', 'TRANSFER_OUT')
           AND (
                 (fp.company_id = %s AND ft.responsible_company_id = %s)
              OR (fp.company_id = %s AND ft.responsible_company_id = %s)
@@ -211,11 +239,21 @@ def _reconciliation_movements(lender_company_id, borrower_company_id, period_sta
         (
             lender_company_id,
             borrower_company_id,
+            borrower_company_id,
+            lender_company_id,
             lender_company_id,
             borrower_company_id,
             DEFAULT_DENSITY,
             borrower_company_id,
             lender_company_id,
+            DEFAULT_DENSITY,
+            lender_company_id,
+            borrower_company_id,
+            borrower_company_id,
+            lender_company_id,
+            lender_company_id,
+            borrower_company_id,
+            DEFAULT_DENSITY,
             borrower_company_id,
             lender_company_id,
             DEFAULT_DENSITY,
@@ -241,6 +279,7 @@ def _reconciliation_details(lender_company_id, borrower_company_id, period_start
         SELECT
             ft.id,
             ft.operation_date,
+            ft.operation_type,
             ft.liters,
             COALESCE(NULLIF(ft.kg, 0), ft.liters * COALESCE(ft.density, %s)) AS kg_effective,
             ft.document_number,
@@ -251,7 +290,11 @@ def _reconciliation_details(lender_company_id, borrower_company_id, period_start
             rc.name AS responsible_company_name,
             fr.id AS request_id,
             CASE
-                WHEN fp.company_id = %s AND ft.responsible_company_id = %s THEN 'issued'
+                WHEN (
+                    (fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('EXPENSE', 'TRANSFER_OUT'))
+                    OR
+                    (fp.company_id = %s AND ft.responsible_company_id = %s AND ft.operation_type IN ('INCOME', 'TRANSFER_IN', 'CORRECTION'))
+                ) THEN 'issued'
                 ELSE 'returned'
             END AS direction
         FROM fuel_transactions ft
@@ -259,10 +302,10 @@ def _reconciliation_details(lender_company_id, borrower_company_id, period_start
         LEFT JOIN companies sc ON sc.id = fp.company_id
         LEFT JOIN companies rc ON rc.id = ft.responsible_company_id
         LEFT JOIN fuel_requests fr ON fr.fuel_transaction_id = ft.id
-        WHERE ft.operation_type = 'EXPENSE'
-          AND ft.status = 'approved'
+        WHERE ft.status = 'approved'
           AND ft.operation_date >= %s
           AND ft.operation_date < %s
+          AND ft.operation_type IN ('INCOME', 'TRANSFER_IN', 'CORRECTION', 'EXPENSE', 'TRANSFER_OUT')
           AND (
                 (fp.company_id = %s AND ft.responsible_company_id = %s)
              OR (fp.company_id = %s AND ft.responsible_company_id = %s)
@@ -273,6 +316,8 @@ def _reconciliation_details(lender_company_id, borrower_company_id, period_start
             DEFAULT_DENSITY,
             lender_company_id,
             borrower_company_id,
+            borrower_company_id,
+            lender_company_id,
             period_start,
             period_end,
             lender_company_id,
